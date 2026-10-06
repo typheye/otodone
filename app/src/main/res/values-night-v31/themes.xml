@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.OtoDone" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <!-- 系统闪屏只用来消开屏灰屏：底色与窗口底色一致，图标透明。
+             logo 动画只由 Compose 的 SplashMask 负责，避免"两层遮罩叠加"。
+             注意：不要把 windowSplashScreenAnimatedIcon 设成 splash_logo，
+             系统会把它放大裁切成一个巨大的 logo。 -->
+        <item name="android:windowSplashScreenBackground">@color/window_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_transparent</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>

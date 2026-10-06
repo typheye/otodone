@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系统闪屏不要显示任何 logo：logo 动画由 Compose 的 SplashMask 单独负责，
+     两层叠加会出现"放大裁切的巨大 logo"。这里只保留底色用于消除开屏灰屏。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+</shape>

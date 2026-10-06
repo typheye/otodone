@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌英文名固定写作 otoDone：小写 o + 大写 D。中文名见 values-zh-rCN -->
+    <string name="app_name">otoDone</string>
+    <string name="hosts_title">设备</string>
+    <string name="hosts_empty_title">还没有电脑</string>
+    <string name="hosts_empty_desc">点右下角「+」添加一台支持 RDP（3389）的电脑</string>
+    <string name="host_add">添加电脑</string>
+    <string name="host_edit">编辑电脑</string>
+    <string name="host_name">名称</string>
+    <string name="host_address">地址</string>
+    <string name="host_port">端口</string>
+    <string name="host_username">用户名</string>
+    <string name="host_domain">域（可选）</string>
+    <string name="host_password">密码</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_connect">连接</string>
+    <string name="action_edit">编辑</string>
+    <string name="session_connecting">正在连接 %1$s…</string>
+    <string name="session_preparing">正在准备 RDP 会话…</string>
+    <string name="session_failed_title">连接失败</string>
+    <string name="session_disconnected_title">会话已断开</string>
+    <string name="session_retry">重试</string>
+    <string name="session_keyboard">键盘</string>
+    <string name="session_missing_host">找不到这台电脑</string>
+    <string name="session_native_error">FreeRDP 原生库错误：%1$s</string>
+    <string name="action_back">返回</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_section_general">通用</string>
+    <string name="settings_follow_system">自动切换主题</string>
+    <string name="settings_follow_system_desc">根据系统自动切换深浅主题</string>
+    <string name="settings_dark_mode">深色模式</string>
+    <string name="settings_dark_mode_desc">使用深色主题</string>
+    <string name="settings_dynamic_color">动态取色</string>
+    <string name="settings_dynamic_color_desc">根据壁纸自动生成配色（A12+）</string>
+    <string name="settings_section_app">应用</string>
+    <string name="settings_section_other">其他</string>
+    <string name="settings_clear_cache">清除缓存</string>
+    <string name="settings_clear_cache_desc">清理应用临时文件，不影响设备与设置</string>
+    <string name="settings_clear_cache_confirm">将清理应用的缓存与临时文件。已保存的设备和设置不会受影响。</string>
+    <string name="settings_cache_cleared">缓存已清除</string>
+    <string name="settings_back_desc">返回设备列表</string>
+
+    <!-- 通用操作 -->
+    <string name="action_clear">清除</string>
+    <string name="action_close">关闭</string>
+    <string name="action_copy">复制</string>
+    <string name="action_share">分享</string>
+
+    <!-- 关于页 -->
+    <string name="about_title">关于应用</string>
+    <string name="about_summary">版本、设备与安装信息</string>
+    <string name="about_version">版本 %1$s</string>
+    <string name="about_build_version">构建版本</string>
+    <string name="about_target_api">目标 API</string>
+    <string name="about_app_level">应用级别</string>
+    <string name="about_section_developer">开发与维护</string>
+    <string name="about_developer">开发者</string>
+    <string name="about_developer_name">台风眼Typheye</string>
+    <string name="about_feedback">联系与反馈</string>
+    <string name="about_feedback_desc">反馈问题或提出建议</string>
+    <string name="about_feedback_contact">邮箱：typheye@typheye.com\n\n点击"复制"后可通过任意邮箱客户端与我们联系。</string>
+    <string name="about_contact_email">typheye@typheye.com</string>
+    <string name="about_contact_copied">邮箱地址已复制</string>
+    <string name="about_homepage">项目主页</string>
+    <string name="about_homepage_desc">typheye/otodone</string>
+    <string name="about_section_legal">法律信息</string>
+    <string name="about_privacy">服务条款与隐私政策</string>
+    <string name="about_privacy_desc">了解数据与隐私处理方式</string>
+    <string name="about_license">开源许可</string>
+    <string name="about_license_desc">FreeRDP 与第三方组件（Apache-2.0）</string>
+    <string name="about_section_opensource">开源项目</string>
+    <string name="about_by">By %1$s</string>
+    <string name="about_share_text">我正在使用 otoDone，推荐给你！</string>
+</resources>

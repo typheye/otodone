@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose 首帧之前的窗口底色，需与应用表面色接近，避免启动闪一下异色 -->
+    <color name="window_background">#FFFBFBFD</color>
+</resources>
