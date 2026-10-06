@@ -37,6 +37,14 @@
     <string name="settings_dark_mode_desc">使用深色主题</string>
     <string name="settings_dynamic_color">动态取色</string>
     <string name="settings_dynamic_color_desc">根据壁纸自动生成配色（A12+）</string>
+    <string name="settings_paste_shortcut">粘贴快捷键</string>
+    <string name="settings_paste_shortcut_desc">用于粘贴的组合键</string>
+    <string name="paste_shortcut_ctrl_shift_v">Ctrl + Shift + V</string>
+    <string name="paste_shortcut_ctrl_shift_v_desc">Linux 终端（默认）</string>
+    <string name="paste_shortcut_ctrl_v">Ctrl + V</string>
+    <string name="paste_shortcut_ctrl_v_desc">Windows</string>
+    <string name="paste_shortcut_shift_insert">Shift + Insert</string>
+    <string name="paste_shortcut_shift_insert_desc">经典 X11</string>
     <string name="settings_section_app">应用</string>
     <string name="settings_section_other">其他</string>
     <string name="settings_clear_cache">清除缓存</string>

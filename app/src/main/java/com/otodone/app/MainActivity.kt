@@ -23,6 +23,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.otodone.app.data.PasteShortcut
 import com.otodone.app.data.ThemeSettings
 import com.otodone.app.ui.about.AboutScreen
 import com.otodone.app.ui.hosts.HostListRoute
@@ -53,10 +54,12 @@ class MainActivity : ComponentActivity() {
                     onDarkModeChange = settingsViewModel::setDarkMode,
                     onOledBlackChange = settingsViewModel::setOledBlack,
                     onDynamicColorChange = settingsViewModel::setDynamicColor,
+                    onPasteShortcutChange = settingsViewModel::setPasteShortcut,
                 )
             }
         }
     }
+
 }
 
 private object Routes {
@@ -74,6 +77,7 @@ private fun OtoDoneRoot(
     onDarkModeChange: (Boolean) -> Unit,
     onOledBlackChange: (Boolean) -> Unit,
     onDynamicColorChange: (Boolean) -> Unit,
+    onPasteShortcutChange: (PasteShortcut) -> Unit,
 ) {
     val navController = rememberNavController()
     var splashVisible by remember { mutableStateOf(true) }
@@ -93,6 +97,7 @@ private fun OtoDoneRoot(
                     onDarkModeChange = onDarkModeChange,
                     onOledBlackChange = onOledBlackChange,
                     onDynamicColorChange = onDynamicColorChange,
+                    onPasteShortcutChange = onPasteShortcutChange,
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
                 )

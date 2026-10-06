@@ -31,6 +31,7 @@ public class LibFreeRDP
 {
 	private static final String TAG = "LibFreeRDP";
 	private static EventListener listener;
+	private static volatile ClipboardSentListener clipboardSentListener;
 	private static boolean mHasH264 = false;
 	private static boolean mHasCameraRedirection = false;
 
@@ -187,6 +188,21 @@ public class LibFreeRDP
 	public static void setEventListener(EventListener l)
 	{
 		listener = l;
+	}
+
+	/**
+	 * Receives the native cliprdr handshake event: the server requested our clipboard data and
+	 * the response was handed to the channel successfully. Registered by RdpSession so that
+	 * Ctrl+V is only sent after the clipboard data actually reached the remote.
+	 */
+	public interface ClipboardSentListener
+	{
+		void OnClipboardDataSent(long instance);
+	}
+
+	public static void setClipboardSentListener(ClipboardSentListener l)
+	{
+		clipboardSentListener = l;
 	}
 
 	public static long newInstance(Context context)
@@ -736,6 +752,15 @@ public class LibFreeRDP
 		UIEventListener uiEventListener = s.getUIEventListener();
 		if (uiEventListener != null)
 			uiEventListener.OnGraphicsResize(width, height, bpp);
+	}
+
+	// Keep in sync with android_cliprdr.c (android_cliprdr_server_format_data_request).
+	private static void OnClipboardDataSent(long inst)
+	{
+		Log.i(TAG, "OnClipboardDataSent instance=" + inst);
+		ClipboardSentListener l = clipboardSentListener;
+		if (l != null)
+			l.OnClipboardDataSent(inst);
 	}
 
 	private static void OnRemoteClipboardChanged(long inst, String data)

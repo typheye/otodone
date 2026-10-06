@@ -1,12 +1,17 @@
 package com.otodone.app.rdp
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.freerdp.freerdpcore.application.GlobalApp
 import com.freerdp.freerdpcore.domain.BookmarkBase
 import com.freerdp.freerdpcore.services.LibFreeRDP
+import com.otodone.app.data.PasteShortcut
 import com.otodone.app.data.RdpHost
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,8 +38,16 @@ sealed interface RdpState {
  * [GlobalApp.SessionEventListener]（连接事件，主线程派发）。公开的 [state]、
  * [bitmap]、[frameTick] 全部是线程安全的 StateFlow，可直接被 Compose 订阅。
  */
-class RdpSession(private val appContext: Context) :
+class RdpSession(
+    private val appContext: Context,
+    /**
+     * 当前「粘贴快捷键」设置。用 StateFlow 而非快照值，onText() 发送时读最新值，
+     * 因此会话运行中改设置也能立即生效。
+     */
+    private val pasteShortcut: StateFlow<PasteShortcut> = MutableStateFlow(PasteShortcut.CTRL_SHIFT_V),
+) :
     LibFreeRDP.UIEventListener,
+    LibFreeRDP.ClipboardSentListener,
     GlobalApp.SessionEventListener,
     RdpSurfaceView.Listener {
 
@@ -56,6 +69,10 @@ class RdpSession(private val appContext: Context) :
     @Volatile private var lastWidth = 0
     @Volatile private var lastHeight = 0
 
+    // cliprdr 握手等待：native 在服务端成功取走剪贴板数据后回调 OnClipboardDataSent。
+    @Volatile private var clipboardSentLatch: CountDownLatch? = null
+    @Volatile private var clipboardSentInstance: Long = 0L
+
     private val endpoint: String get() = host?.endpoint.orEmpty()
 
     fun connect(host: RdpHost, width: Int, height: Int) {
@@ -71,6 +88,7 @@ class RdpSession(private val appContext: Context) :
                 val session = GlobalApp.createSession(bookmark, appContext)
                 instance = session.instance
                 session.setUIEventListener(this@RdpSession)
+                LibFreeRDP.setClipboardSentListener(this@RdpSession)
                 GlobalApp.registerSessionListener(instance, this@RdpSession)
                 if (!LibFreeRDP.setConnectionInfo(appContext, instance, bookmark)) {
                     fail("无法解析 RDP 连接参数")
@@ -88,6 +106,8 @@ class RdpSession(private val appContext: Context) :
 
     fun close() {
         closed = true
+        // 裁剪版 FreeRDP 只有这一处全局剪贴板回调，会话结束时统一摘掉。
+        LibFreeRDP.setClipboardSentListener(null)
         val inst = instance
         if (inst != 0L) {
             runCatching { LibFreeRDP.disconnect(inst) }
@@ -144,18 +164,58 @@ class RdpSession(private val appContext: Context) :
             return
         }
 
-        // 含中文等非 ASCII：GNOME 远程桌面的 unicode 注入通道传不过去，
-        // 改用「写入远端剪贴板 + Ctrl+V」。后台线程是为了给剪贴板通道一点时间。
+        Log.i(TAG, "onText(non-ascii) len=${text.length} text=$text")
+
+        // 1) 先写进 Android 系统剪贴板。FreeRDP 的 cliprdr 在服务端发来
+        //    CB_FORMAT_DATA_REQUEST 时最终要从这里取数据；官方客户端的系统剪贴板
+        //    监听在裁剪 vendored 代码时被删掉了，所以这里手动补上这一步。
+        val clipOk = runCatching {
+            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("otodone", text))
+            cm != null
+        }.getOrElse {
+            Log.w(TAG, "set system clipboard failed", it)
+            false
+        }
+        Log.i(TAG, "system clipboard set=$clipOk")
+
+        // 2) 登记握手等待，然后向远端剪贴板通道广播格式列表。
+        //    必须在 sendClipboardData 之前登记：回调来自 native 线程，若它抢在登记前到达，
+        //    这一次就得白等超时。
+        val latch = CountDownLatch(1)
+        clipboardSentInstance = inst
+        clipboardSentLatch = latch
+        val pushed = runCatching { LibFreeRDP.sendClipboardData(inst, text) }.getOrDefault(false)
+        Log.i(TAG, "sendClipboardData=$pushed")
+
+        // 3) 等服务端来取剪贴板数据（CB_FORMAT_DATA_REQUEST）；native 在成功回送后回调
+        //    OnClipboardDataSent。收到回调再发粘贴快捷键，取代原先写死的 500ms。
+        //    超时兜底：服务端没来取也不能让中文输入卡死，超时后照发粘贴快捷键。
         Thread {
-            runCatching {
-                LibFreeRDP.sendClipboardData(inst, text)
-                Thread.sleep(150)
-                LibFreeRDP.sendKeyEvent(inst, RdpKeys.VK_CONTROL, true)
-                LibFreeRDP.sendKeyEvent(inst, RdpKeys.VK_V, true)
-                LibFreeRDP.sendKeyEvent(inst, RdpKeys.VK_V, false)
-                LibFreeRDP.sendKeyEvent(inst, RdpKeys.VK_CONTROL, false)
-            }.onFailure { Log.w(TAG, "clipboard paste failed", it) }
+            val signaled = try {
+                latch.await(CLIPBOARD_SENT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                false
+            }
+            if (clipboardSentLatch === latch) clipboardSentLatch = null
+            Log.i(TAG, if (signaled) "clipboard-data-sent(callback)" else "clipboard-data-sent timeout")
+
+            if (closed || instance != inst) return@Thread
+            val ok = runCatching {
+                sendPasteShortcut(inst)
+                true
+            }.getOrElse {
+                Log.w(TAG, "paste shortcut failed", it)
+                false
+            }
+            Log.i(TAG, "paste shortcut sent=$ok")
         }.start()
+    }
+
+    /** native 线程回调：服务端已成功取走剪贴板数据（format data response 已回送）。 */
+    override fun OnClipboardDataSent(instanceId: Long) {
+        if (instanceId != clipboardSentInstance) return
+        clipboardSentLatch?.countDown()
     }
 
     // ---- 连接事件（GlobalApp 派发到主线程）----
@@ -282,6 +342,45 @@ class RdpSession(private val appContext: Context) :
 
     // ---- 内部 ----
 
+    /**
+     * 按当前设置发送粘贴组合键。
+     *
+     * 修饰键必须用 VK_LCONTROL / VK_LSHIFT：WinPR 的扫描码表里查不到
+     * VK_CONTROL / VK_SHIFT 这两个通用码，会静默返回 0（这是踩过的坑，别改回去）。
+     */
+    private fun sendPasteShortcut(inst: Long) {
+        val shortcut = pasteShortcut.value
+        val keys: List<Pair<Int, Boolean>> = when (shortcut) {
+            // Linux 终端（gnome-terminal 等）：Ctrl+V 在终端里无效，必须 Ctrl+Shift+V
+            PasteShortcut.CTRL_SHIFT_V -> listOf(
+                RdpKeys.VK_LCONTROL to true,
+                RdpKeys.VK_LSHIFT to true,
+                RdpKeys.VK_V to true,
+                RdpKeys.VK_V to false,
+                RdpKeys.VK_LSHIFT to false,
+                RdpKeys.VK_LCONTROL to false,
+            )
+            // Windows / 大多数 GTK 应用
+            PasteShortcut.CTRL_V -> listOf(
+                RdpKeys.VK_LCONTROL to true,
+                RdpKeys.VK_V to true,
+                RdpKeys.VK_V to false,
+                RdpKeys.VK_LCONTROL to false,
+            )
+            // 经典 X11
+            PasteShortcut.SHIFT_INSERT -> listOf(
+                RdpKeys.VK_LSHIFT to true,
+                RdpKeys.VK_INSERT to true,
+                RdpKeys.VK_INSERT to false,
+                RdpKeys.VK_LSHIFT to false,
+            )
+        }
+        Log.i(TAG, "sending paste shortcut: ${shortcut.name}")
+        for ((virtualKey, down) in keys) {
+            LibFreeRDP.sendKeyEvent(inst, virtualKey, down)
+        }
+    }
+
     private fun fail(message: String) {
         Log.w(TAG, "RDP failure: $message")
         _state.value = RdpState.Failed(endpoint, message)
@@ -303,6 +402,7 @@ class RdpSession(private val appContext: Context) :
         val inst = instance
         if (inst == 0L) return
         instance = 0L
+        LibFreeRDP.setClipboardSentListener(null)
         GlobalApp.unregisterSessionListener(inst)
         scope.launch {
             if (delayMs > 0) delay(delayMs)
@@ -355,5 +455,8 @@ class RdpSession(private val appContext: Context) :
 
     companion object {
         private const val TAG = "RdpSession"
+
+        /** cliprdr 握手回调的最长等待时间；超时后仍发粘贴快捷键，避免中文输入卡死。 */
+        private const val CLIPBOARD_SENT_TIMEOUT_MS = 3000L
     }
 }

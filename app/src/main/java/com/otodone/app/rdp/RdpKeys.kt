@@ -52,6 +52,8 @@ object RdpKeys {
     const val VK_RETURN = 0x0D
     const val VK_SHIFT = 0x10
     const val VK_CONTROL = 0x11
+    const val VK_LCONTROL = 0xA2
+    const val VK_LSHIFT = 0xA0
     const val VK_MENU = 0x12
     const val VK_ESCAPE = 0x1B
     const val VK_SPACE = 0x20

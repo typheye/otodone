@@ -175,3 +175,38 @@ fun ActionPreferenceRow(
         },
     )
 }
+
+/** 带右箭头 + 当前取值的行：用于「点击后在底部抽屉里单选」的设置项。 */
+@Composable
+fun ValuePreferenceRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String?,
+    value: String,
+    onClick: () -> Unit,
+) {
+    PreferenceRow(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        onClick = onClick,
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.size(4.dp))
+                Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
+}

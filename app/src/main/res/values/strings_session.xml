@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="session_exit_confirm">再按一次返回键退出会话</string>
+    <string name="settings_section_session">会话</string>
 </resources>

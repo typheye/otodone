@@ -12,11 +12,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,7 +25,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -39,12 +38,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.otodone.app.R
+import com.otodone.app.data.PasteShortcut
 import com.otodone.app.data.ThemeSettings
 import com.otodone.app.ui.components.ActionPreferenceRow
 import com.otodone.app.ui.components.PreferenceCard
 import com.otodone.app.ui.components.PreferenceDivider
 import com.otodone.app.ui.components.SectionLabel
+import com.otodone.app.ui.components.SingleChoiceItem
+import com.otodone.app.ui.components.SingleChoiceSheet
 import com.otodone.app.ui.components.SwitchPreferenceRow
+import com.otodone.app.ui.components.ValuePreferenceRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -64,6 +67,7 @@ fun SettingsScreen(
     onDarkModeChange: (Boolean) -> Unit,
     onOledBlackChange: (Boolean) -> Unit,
     onDynamicColorChange: (Boolean) -> Unit,
+    onPasteShortcutChange: (PasteShortcut) -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -72,6 +76,7 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val cacheClearedMessage = stringResource(R.string.settings_cache_cleared)
     var showClearCacheDialog by remember { mutableStateOf(false) }
+    var showPasteShortcutSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -137,6 +142,20 @@ fun SettingsScreen(
                 }
             }
 
+            // 会话相关设置单独分组
+            item { SectionLabel(stringResource(R.string.settings_section_session), topSpace = true) }
+            item {
+                PreferenceCard {
+                    ValuePreferenceRow(
+                        icon = Icons.Filled.ContentPaste,
+                        title = stringResource(R.string.settings_paste_shortcut),
+                        subtitle = stringResource(R.string.settings_paste_shortcut_desc),
+                        value = pasteShortcutLabel(settings.pasteShortcut),
+                        onClick = { showPasteShortcutSheet = true },
+                    )
+                }
+            }
+
             item { SectionLabel(stringResource(R.string.settings_section_app), topSpace = true) }
             item {
                 PreferenceCard {
@@ -176,7 +195,46 @@ fun SettingsScreen(
             onDismiss = { showClearCacheDialog = false },
         )
     }
+
+    if (showPasteShortcutSheet) {
+        SingleChoiceSheet(
+            title = stringResource(R.string.settings_paste_shortcut),
+            items = PasteShortcut.entries.map { shortcut ->
+                SingleChoiceItem(
+                    value = shortcut,
+                    label = pasteShortcutLabel(shortcut),
+                    description = pasteShortcutDescription(shortcut),
+                )
+            },
+            selected = settings.pasteShortcut,
+            onSelect = { shortcut ->
+                onPasteShortcutChange(shortcut)
+                showPasteShortcutSheet = false
+            },
+            onDismiss = { showPasteShortcutSheet = false },
+        )
+    }
 }
+
+/** 粘贴快捷键的展示文本。 */
+@Composable
+private fun pasteShortcutLabel(shortcut: PasteShortcut): String = stringResource(
+    when (shortcut) {
+        PasteShortcut.CTRL_SHIFT_V -> R.string.paste_shortcut_ctrl_shift_v
+        PasteShortcut.CTRL_V -> R.string.paste_shortcut_ctrl_v
+        PasteShortcut.SHIFT_INSERT -> R.string.paste_shortcut_shift_insert
+    },
+)
+
+/** 粘贴快捷键的适用场景说明。 */
+@Composable
+private fun pasteShortcutDescription(shortcut: PasteShortcut): String = stringResource(
+    when (shortcut) {
+        PasteShortcut.CTRL_SHIFT_V -> R.string.paste_shortcut_ctrl_shift_v_desc
+        PasteShortcut.CTRL_V -> R.string.paste_shortcut_ctrl_v_desc
+        PasteShortcut.SHIFT_INSERT -> R.string.paste_shortcut_shift_insert_desc
+    },
+)
 
 /** 清空应用的缓存目录内容；失败也不抛出，避免影响界面。 */
 private fun clearCache(context: Context) {
