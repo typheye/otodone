@@ -11,8 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.otodone.app.R
 import com.otodone.app.data.RdpHost
+import com.otodone.app.ui.insets.rememberSystemBarInsets
 
 
 @Composable
@@ -78,9 +79,15 @@ fun HostListScreen(
     var editing by remember { mutableStateOf<RdpHost?>(null) }
     var editorVisible by remember { mutableStateOf(false) }
 
+    // 统一的系统栏/小窗安全高度：小窗里对固定配额取 max，不叠加
+    val windowInsets = rememberSystemBarInsets()
+
     Scaffold(
         topBar = {
             TopAppBar(
+                windowInsets = windowInsets.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+                ),
                 // 首页标题显示应用名（otoDone / 无触亦达），不再是"设备"
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
@@ -107,8 +114,8 @@ fun HostListScreen(
                 Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.host_add))
             }
         },
-        // 显式吃掉系统栏/异形屏 inset（enableEdgeToEdge 之后内容必须自己内缩）
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // 统一的 SystemBars inset：内容/ FAB 都只补这一份，小窗取 max 而不是叠加
+        contentWindowInsets = windowInsets,
         // 注意：这里【不要】引用任何 RdpNative/FreeRDP 的东西。
         // 触碰 RdpNative 会触发 System.loadLibrary，冷启动要动态链接 ~40MB 原生库，
         // 表现为启动后长时间灰屏。原生库只在真正进入会话时加载。

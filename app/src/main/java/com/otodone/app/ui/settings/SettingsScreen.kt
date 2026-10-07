@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.lazy.LazyColumn
 import com.otodone.app.ui.components.ConfirmSheet
 import androidx.compose.material.icons.Icons
@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import com.otodone.app.ui.icons.ScreenOrientationIcon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,7 +40,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.otodone.app.R
 import com.otodone.app.data.PasteShortcut
+import com.otodone.app.data.SessionOrientation
 import com.otodone.app.data.ThemeSettings
+import com.otodone.app.ui.insets.rememberSystemBarInsets
 import com.otodone.app.ui.components.ActionPreferenceRow
 import com.otodone.app.ui.components.PreferenceCard
 import com.otodone.app.ui.components.PreferenceDivider
@@ -68,19 +71,25 @@ fun SettingsScreen(
     onOledBlackChange: (Boolean) -> Unit,
     onDynamicColorChange: (Boolean) -> Unit,
     onPasteShortcutChange: (PasteShortcut) -> Unit,
+    onSessionOrientationChange: (SessionOrientation) -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val windowInsets = rememberSystemBarInsets()
     val cacheClearedMessage = stringResource(R.string.settings_cache_cleared)
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showPasteShortcutSheet by remember { mutableStateOf(false) }
+    var showSessionOrientationSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
+                windowInsets = windowInsets.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+                ),
                 title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -96,9 +105,8 @@ fun SettingsScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        // 显式吃掉系统栏/异形屏 inset：enableEdgeToEdge() 只让窗口能画到系统栏下面，
-        // 内容必须自己内缩，否则会被底部导航条（手势条）压住。
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // 统一的 SystemBars inset：小窗取 max 兜底，底部不会多出一截、也不会被压住。
+        contentWindowInsets = windowInsets,
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -146,6 +154,14 @@ fun SettingsScreen(
             item { SectionLabel(stringResource(R.string.settings_section_session), topSpace = true) }
             item {
                 PreferenceCard {
+                    ValuePreferenceRow(
+                        icon = ScreenOrientationIcon,
+                        title = stringResource(R.string.settings_screen_orientation),
+                        subtitle = stringResource(R.string.settings_screen_orientation_desc),
+                        value = screenOrientationLabel(settings.sessionOrientation),
+                        onClick = { showSessionOrientationSheet = true },
+                    )
+                    PreferenceDivider()
                     ValuePreferenceRow(
                         icon = Icons.Filled.ContentPaste,
                         title = stringResource(R.string.settings_paste_shortcut),
@@ -196,6 +212,25 @@ fun SettingsScreen(
         )
     }
 
+    if (showSessionOrientationSheet) {
+        SingleChoiceSheet(
+            title = stringResource(R.string.settings_screen_orientation),
+            items = SessionOrientation.entries.map { orientation ->
+                SingleChoiceItem(
+                    value = orientation,
+                    label = screenOrientationLabel(orientation),
+                    description = screenOrientationDescription(orientation),
+                )
+            },
+            selected = settings.sessionOrientation,
+            onSelect = { orientation ->
+                onSessionOrientationChange(orientation)
+                showSessionOrientationSheet = false
+            },
+            onDismiss = { showSessionOrientationSheet = false },
+        )
+    }
+
     if (showPasteShortcutSheet) {
         SingleChoiceSheet(
             title = stringResource(R.string.settings_paste_shortcut),
@@ -215,6 +250,26 @@ fun SettingsScreen(
         )
     }
 }
+
+/** 屏幕方向的展示文本。 */
+@Composable
+private fun screenOrientationLabel(orientation: SessionOrientation): String = stringResource(
+    when (orientation) {
+        SessionOrientation.AUTO -> R.string.screen_orientation_auto
+        SessionOrientation.LANDSCAPE -> R.string.screen_orientation_landscape
+        SessionOrientation.PORTRAIT -> R.string.screen_orientation_portrait
+    },
+)
+
+/** 屏幕方向的说明文本。 */
+@Composable
+private fun screenOrientationDescription(orientation: SessionOrientation): String = stringResource(
+    when (orientation) {
+        SessionOrientation.AUTO -> R.string.screen_orientation_auto_desc
+        SessionOrientation.LANDSCAPE -> R.string.screen_orientation_landscape_desc
+        SessionOrientation.PORTRAIT -> R.string.screen_orientation_portrait_desc
+    },
+)
 
 /** 粘贴快捷键的展示文本。 */
 @Composable

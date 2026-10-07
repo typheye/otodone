@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 鼠标右键图标：鼠标轮廓 + 高亮右半边（与键盘浮标镜像）。
+     写法参考 ic_settings.xml：24dp 视口、字面量颜色；Compose 的 Icon
+     会按 LocalContentColor / tint 重新着色（ColorFilter.SrcIn 保留 alpha，
+     所以"实心右半边"在着色后仍然表现为高亮区域）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 右键（右上半边）高亮填充 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2.5 C15.6,2.5 18.5,5.4 18.5,9 V10.5 H12 Z" />
+    <!-- 鼠标轮廓 + 左/右键分隔线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M12,2.5 C8.4,2.5 5.5,5.4 5.5,9 V15 C5.5,18.7 8.4,21.5 12,21.5 C15.6,21.5 18.5,18.7 18.5,15 V9 C18.5,5.4 15.6,2.5 12,2.5 Z M12,2.5 V10.5" />
+</vector>

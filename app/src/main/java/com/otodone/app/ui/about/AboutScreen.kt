@@ -18,8 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.lazy.LazyColumn
 import com.otodone.app.ui.components.ConfirmSheet
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.pm.PackageInfoCompat
 import com.otodone.app.R
+import com.otodone.app.ui.insets.rememberSystemBarInsets
 import com.otodone.app.ui.components.ActionPreferenceRow
 import com.otodone.app.ui.components.PreferenceCard
 import com.otodone.app.ui.components.PreferenceDivider
@@ -80,6 +81,7 @@ fun AboutScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var showContactDialog by remember { mutableStateOf(false) }
+    val windowInsets = rememberSystemBarInsets()
 
     val packageInfo = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
@@ -94,6 +96,9 @@ fun AboutScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
+                windowInsets = windowInsets.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+                ),
                 title = { Text(stringResource(R.string.about_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -117,7 +122,7 @@ fun AboutScreen(onBack: () -> Unit) {
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        contentWindowInsets = WindowInsets.safeDrawing,
+        contentWindowInsets = windowInsets,
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),

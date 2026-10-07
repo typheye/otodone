@@ -9,9 +9,13 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import com.otodone.app.data.ThemeMode
+import com.otodone.app.ui.insets.SystemBars
+import com.otodone.app.ui.insets.findActivity
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF2F6BFF),
@@ -47,6 +51,16 @@ fun OtoDoneTheme(
         ThemeMode.FOLLOW_SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
+    }
+    // 系统栏图标跟随「应用内实际生效」的明暗：themeMode 可以强制深/浅色，
+    // 与系统夜景模式无关，所以不能只依赖 configureWindow 里的系统判断。
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            view.context.findActivity()?.window?.let { window ->
+                SystemBars.setLightSystemBars(window, light = !darkTheme)
+            }
+        }
     }
     val context = LocalContext.current
     val baseScheme = when {

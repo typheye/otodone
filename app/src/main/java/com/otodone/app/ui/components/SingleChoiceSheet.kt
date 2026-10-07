@@ -3,11 +3,10 @@ package com.otodone.app.ui.components
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -17,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.otodone.app.ui.insets.rememberSystemBarInsets
 
 /** 单选抽屉的一个选项。 */
 data class SingleChoiceItem<T>(
@@ -39,12 +39,16 @@ fun <T> SingleChoiceSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier) {
+    val windowInsets = rememberSystemBarInsets()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = modifier,
+        // 小窗里系统导航栏上报不可用，统一按 SystemBars 的 max 口径取底部安全区
+        contentWindowInsets = { windowInsets.only(WindowInsetsSides.Bottom) },
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // 底部导航条 inset，避免最后一项被手势条压住
-                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(bottom = 16.dp),
         ) {
             Text(

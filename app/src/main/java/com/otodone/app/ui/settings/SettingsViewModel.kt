@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.otodone.app.data.PasteShortcut
+import com.otodone.app.data.SessionOrientation
 import com.otodone.app.data.ThemeSettings
 import com.otodone.app.data.ThemeSettingsRepository
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,6 +42,10 @@ class SettingsViewModel(private val repository: ThemeSettingsRepository) : ViewM
 
     fun setPasteShortcut(shortcut: PasteShortcut) {
         viewModelScope.launch { repository.setPasteShortcut(shortcut) }
+    }
+
+    fun setSessionOrientation(orientation: SessionOrientation) {
+        viewModelScope.launch { repository.setSessionOrientation(orientation) }
     }
 
     companion object {

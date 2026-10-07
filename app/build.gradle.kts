@@ -24,6 +24,8 @@ android {
         versionCode = 2610060
         versionName = "1.26.10.Alpha1"
         vectorDrawables { useSupportLibrary = true }
+        // 多点触控按键状态机回归测试：向真实 View 派发多指 MotionEvent。
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -98,4 +100,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("junit:junit:4.13.2")
 }

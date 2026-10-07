@@ -10,6 +10,7 @@ import com.otodone.app.data.PasteShortcut
 import com.otodone.app.data.RdpHost
 import com.otodone.app.data.ThemeSettingsRepository
 import com.otodone.app.rdp.RdpSession
+import com.otodone.app.rdp.RdpState
 import com.otodone.app.rdp.RdpSurfaceView
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,7 +39,15 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private var startedHostId: String? = null
 
+    // 记住最后一次连接参数，供「切回前台自动重连」使用
+    private var lastHost: RdpHost? = null
+    private var lastWidth = 0
+    private var lastHeight = 0
+
     fun connect(host: RdpHost, width: Int, height: Int) {
+        lastHost = host
+        lastWidth = width
+        lastHeight = height
         if (startedHostId == host.id) return
         startedHostId = host.id
         session.connect(host, width, height)
@@ -47,6 +56,19 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun retry(host: RdpHost, width: Int, height: Int) {
         startedHostId = null
         connect(host, width, height)
+    }
+
+    /**
+     * 从后台切回前台时调用：**只在连接已断开/失败时**自动重连，
+     * 正常会话不会被无谓打断（避免闪一下"正在连接"）。
+     */
+    fun reconnectIfNeeded() {
+        val current = state.value
+        val broken = current is RdpState.Failed || current is RdpState.Disconnected
+        if (!broken) return
+        val host = lastHost ?: return
+        if (lastWidth <= 0 || lastHeight <= 0) return
+        retry(host, lastWidth, lastHeight)
     }
 
     override fun onCleared() {

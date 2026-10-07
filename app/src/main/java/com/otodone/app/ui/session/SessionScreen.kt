@@ -10,7 +10,8 @@ import android.widget.Toast
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,11 +53,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,9 +75,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.otodone.app.R
 import com.otodone.app.data.RdpHost
+import com.otodone.app.data.SessionOrientation
 import com.otodone.app.rdp.RdpNative
 import com.otodone.app.rdp.RdpState
 import com.otodone.app.rdp.RdpSurfaceView
@@ -75,6 +89,7 @@ import com.otodone.app.ui.hosts.HostListViewModel
 @Composable
 fun SessionRoute(
     hostId: String,
+    sessionOrientation: SessionOrientation,
     onBack: () -> Unit,
     hostListViewModel: HostListViewModel = viewModel(factory = HostListViewModel.Factory),
     sessionViewModel: RdpSessionViewModel = viewModel(factory = RdpSessionViewModel.Factory),
@@ -84,7 +99,12 @@ fun SessionRoute(
     if (host == null) {
         MissingHostScreen(onBack = onBack)
     } else {
-        SessionScreen(host = host, viewModel = sessionViewModel, onBack = onBack)
+        SessionScreen(
+            host = host,
+            sessionOrientation = sessionOrientation,
+            viewModel = sessionViewModel,
+            onBack = onBack,
+        )
     }
 }
 
@@ -106,6 +126,7 @@ private fun MissingHostScreen(onBack: () -> Unit) {
 @Composable
 fun SessionScreen(
     host: RdpHost,
+    sessionOrientation: SessionOrientation,
     viewModel: RdpSessionViewModel,
     onBack: () -> Unit,
 ) {
@@ -118,9 +139,23 @@ fun SessionScreen(
         context.getSystemService(InputMethodManager::class.java)
     }
     var surfaceView by remember { mutableStateOf<RdpSurfaceView?>(null) }
+    // 「右键待发」：按住右上角浮标时为 true，画面上的普通单指点击改发右键。
+    var rightClickArmed by remember { mutableStateOf(false) }
+    // AndroidView（远端画面）在 Compose 根坐标里的原点，用于浮标坐标换算。
+    var surfaceOrigin by remember { mutableStateOf(Offset.Zero) }
 
-    // 全屏沉浸 + 默认横屏 + 内容延伸到异形屏（刘海/挖孔）区域
-    SessionWindowEffect()
+    // 全屏沉浸 + 按设置决定屏幕方向 + 内容延伸到异形屏（刘海/挖孔）区域
+    SessionWindowEffect(sessionOrientation)
+
+    // 从后台切回前台自动重连：后台期间会话常常已断，回来看不该停在"连接失败"。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.reconnectIfNeeded()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -132,15 +167,23 @@ fun SessionScreen(
                 }
             }
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { surfaceOrigin = it.positionInRoot() },
                 factory = { ctx ->
                     RdpSurfaceView(ctx).also { view ->
                         view.listener = viewModel.inputListener
+                        // 粘性右键：画面发完一次右键就自动解除，避免下一次点击误触。
+                        view.onRightClickSent = {
+                            rightClickArmed = false
+                            view.rightClickArmed = false
+                        }
                         surfaceView = view
                     }
                 },
                 update = { view ->
                     view.listener = viewModel.inputListener
+                    view.rightClickArmed = rightClickArmed
                     view.setFrame(bitmap, frameTick)
                 },
             )
@@ -172,44 +215,141 @@ fun SessionScreen(
             }
         }
 
-        Box(
+        SessionFloatButton(
+            icon = rememberVectorPainter(Icons.Filled.Keyboard),
+            contentDescription = stringResource(R.string.session_keyboard),
+            onClick = { surfaceView?.showKeyboard() },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.displayCutout)
-                .padding(end = 14.dp, bottom = 14.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.32f))
-                .clickable { surfaceView?.showKeyboard() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Filled.Keyboard,
-                contentDescription = stringResource(R.string.session_keyboard),
-                tint = Color.White.copy(alpha = 0.9f),
-                modifier = Modifier.size(22.dp),
-            )
-        }
+                .padding(end = 14.dp, bottom = 14.dp),
+        )
+
+        // 键盘浮标在右下角，右键浮标放左下角（与它左右对称，同一水平线）。
+        // 粘性右键：点一下浮标进入右键模式（高亮），再点画面 = 右键，发完自动退出。
+        // 刻意做成单指顺序操作——不依赖"一根手指按住浮标 + 另一根手指点画面"，
+        // 因为后者要走 Compose AndroidView 的多指路由，实测在真机上会被吞掉。
+        SessionFloatButton(
+            icon = painterResource(R.drawable.ic_mouse_right),
+            contentDescription = stringResource(R.string.session_right_click),
+            armed = rightClickArmed,
+            onClick = {
+                val next = !rightClickArmed
+                rightClickArmed = next
+                surfaceView?.rightClickArmed = next
+            },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .windowInsetsPadding(WindowInsets.displayCutout)
+                // 必须和键盘浮标一致：padding 写在 size 之前，两圆圈的上下间距才一致。
+                .padding(start = 14.dp, bottom = 14.dp),
+        )
     }
 }
 
 /**
- * 会话期间：隐藏系统栏（沉浸）、允许内容画进异形屏区域、默认横屏；离开时全部还原。
+ * 会话页浮标按钮：44dp 圆形 + 半透明黑底 + 白色图标的公用组件。
+ *
+ * 键盘浮标与右键浮标共用本组件，因此尺寸、底色、图标 tint、按下反馈（背景提亮）
+ * 完全一致，不会再出现"两个按钮一个有点击过渡、另一个没有"。
+ *
+ * 交互由 [pointerInput] 统一跟踪：
+ * - 按下 → [onPressedChange] true 且背景提亮；
+ * - 松手/取消 → [onPressedChange] false；
+ * - 松手点在按钮内 → [onClick]（键盘浮标弹出输入法）；
+ * - 松手点在按钮外 → [onReleaseOutside]（右键浮标把这根手指补成一次右键点击）。
+ *
+ * 位置与安全区由调用方通过 [modifier] 传入（`align` + `windowInsetsPadding`）。
  */
 @Composable
-private fun SessionWindowEffect() {
+private fun SessionFloatButton(
+    icon: Painter,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    /** 粘性右键模式下保持高亮，让用户知道现在是"右键待发"。 */
+    armed: Boolean = false,
+    onPressedChange: (Boolean) -> Unit = {},
+    onClick: () -> Unit = {},
+    onReleaseOutside: (Offset) -> Unit = {},
+) {
+    var pressed by remember { mutableStateOf(false) }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            // 按下时提亮，两个浮标都走同一套视觉反馈。
+            .background(
+                if (pressed || armed) {
+                    Color.White.copy(alpha = PRESSED_BG_ALPHA)
+                } else {
+                    Color.Black.copy(alpha = IDLE_BG_ALPHA)
+                },
+            )
+            .onGloballyPositioned { origin = it.positionInRoot() }
+            .semantics { this.contentDescription = contentDescription }
+            .pointerInput(Unit) {
+                val buttonSizePx = 44.dp.toPx()
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    pressed = true
+                    onPressedChange(true)
+                    var upRoot: Offset? = null
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        // 无关指针的事件忽略掉即可，不能因此解除按下/待发状态。
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+                        change.consume()
+                        if (!change.pressed) {
+                            upRoot = origin + change.position
+                            break
+                        }
+                    }
+                    pressed = false
+                    onPressedChange(false)
+                    // 手势被取消时 upRoot 为空：只解除状态，绝不补发点击。
+                    val release = upRoot ?: return@awaitEachGesture
+                    val local = release - origin
+                    val inside = local.x in 0f..buttonSizePx && local.y in 0f..buttonSizePx
+                    if (inside) onClick() else onReleaseOutside(release)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = if (pressed || armed) 1f else 0.9f),
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/** 浮标静止 / 按下时的背景 alpha，两个浮标共用。 */
+private const val IDLE_BG_ALPHA = 0.32f
+private const val PRESSED_BG_ALPHA = 0.42f
+
+/**
+ * 会话期间：隐藏系统栏（沉浸）、允许内容画进异形屏区域、按设置应用屏幕方向；
+ * 离开会话时把方向/系统栏/异形屏模式全部还原，主页面不会被留在横屏。
+ *
+ * 方向用 [LaunchedEffect] 单独应用：[orientation] 变化时立即重新下发，会话中切换设置也能实时生效；
+ * 进入前的方向只在首次组合时记录一次，退出时原样还原（不被中间的切换污染）。
+ */
+@Composable
+private fun SessionWindowEffect(orientation: SessionOrientation) {
     val view = LocalView.current
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val restoreOrientation = remember { activity?.requestedOrientation }
+
     DisposableEffect(Unit) {
-        val activity = context.findActivity()
         val window = activity?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, view) }
         controller?.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller?.hide(WindowInsetsCompat.Type.systemBars())
-
-        val previousOrientation = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
         var previousCutout: Int? = null
         if (window != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -223,7 +363,7 @@ private fun SessionWindowEffect() {
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation =
-                previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                restoreOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             if (window != null && previousCutout != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 window.attributes = window.attributes.apply {
                     layoutInDisplayCutoutMode = previousCutout
@@ -231,6 +371,17 @@ private fun SessionWindowEffect() {
             }
         }
     }
+
+    LaunchedEffect(orientation) {
+        activity?.requestedOrientation = orientation.toActivityOrientation()
+    }
+}
+
+/** 设置项 -> ActivityInfo 方向的映射：自适应必须用 UNSPECIFIED 覆盖 Manifest 里的 portrait。 */
+private fun SessionOrientation.toActivityOrientation(): Int = when (this) {
+    SessionOrientation.AUTO -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    SessionOrientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    SessionOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

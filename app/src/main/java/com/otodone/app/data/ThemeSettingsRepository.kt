@@ -18,6 +18,15 @@ enum class ThemeMode { FOLLOW_SYSTEM, LIGHT, DARK }
 enum class PasteShortcut { CTRL_SHIFT_V, CTRL_V, SHIFT_INSERT }
 
 /**
+ * 会话页的屏幕方向。
+ *
+ * AUTO 只是"跟随系统自动旋转"：会话页运行时会显式把 requestedOrientation 设为
+ * SCREEN_ORIENTATION_UNSPECIFIED，用来覆盖 AndroidManifest 里 MainActivity 的 portrait；
+ * 其余两项强制横/竖屏。退出会话时统一还原成进入前的方向。
+ */
+enum class SessionOrientation { AUTO, LANDSCAPE, PORTRAIT }
+
+/**
  * 主题相关设置的快照。
  *
  * 语义与 wgpro 保持一致：wgpro 用 SharedPreferences 里的两个布尔值
@@ -32,6 +41,8 @@ data class ThemeSettings(
     val oledBlack: Boolean = false,
     /** 发送到远端用于粘贴剪贴板的组合键（默认 Linux 终端的 Ctrl+Shift+V）。 */
     val pasteShortcut: PasteShortcut = PasteShortcut.CTRL_SHIFT_V,
+    /** 进入会话页时的屏幕方向（默认自适应，跟随系统自动旋转）。 */
+    val sessionOrientation: SessionOrientation = SessionOrientation.AUTO,
 ) {
     val themeMode: ThemeMode
         get() = when {
@@ -54,6 +65,7 @@ class ThemeSettingsRepository(private val context: Context) {
 
     // 新增 key，不动已有 key；存枚举名，读到未知值时回落到默认值。
     private val pasteShortcutKey = stringPreferencesKey("paste_shortcut")
+    private val sessionOrientationKey = stringPreferencesKey("session_orientation")
 
     val settings: Flow<ThemeSettings> = context.settingsDataStore.data.map { preferences ->
         ThemeSettings(
@@ -64,6 +76,9 @@ class ThemeSettingsRepository(private val context: Context) {
             pasteShortcut = preferences[pasteShortcutKey]
                 ?.let { name -> PasteShortcut.entries.firstOrNull { it.name == name } }
                 ?: PasteShortcut.CTRL_SHIFT_V,
+            sessionOrientation = preferences[sessionOrientationKey]
+                ?.let { name -> SessionOrientation.entries.firstOrNull { it.name == name } }
+                ?: SessionOrientation.AUTO,
         )
     }
 
@@ -85,5 +100,9 @@ class ThemeSettingsRepository(private val context: Context) {
 
     suspend fun setPasteShortcut(shortcut: PasteShortcut) {
         context.settingsDataStore.edit { it[pasteShortcutKey] = shortcut.name }
+    }
+
+    suspend fun setSessionOrientation(orientation: SessionOrientation) {
+        context.settingsDataStore.edit { it[sessionOrientationKey] = orientation.name }
     }
 }

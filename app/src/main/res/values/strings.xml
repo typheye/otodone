@@ -24,6 +24,7 @@
     <string name="session_disconnected_title">会话已断开</string>
     <string name="session_retry">重试</string>
     <string name="session_keyboard">键盘</string>
+    <string name="session_right_click">鼠标右键</string>
     <string name="session_missing_host">找不到这台电脑</string>
     <string name="session_native_error">FreeRDP 原生库错误：%1$s</string>
     <string name="action_back">返回</string>
@@ -45,6 +46,14 @@
     <string name="paste_shortcut_ctrl_v_desc">Windows</string>
     <string name="paste_shortcut_shift_insert">Shift + Insert</string>
     <string name="paste_shortcut_shift_insert_desc">经典 X11</string>
+    <string name="settings_screen_orientation">屏幕方向</string>
+    <string name="settings_screen_orientation_desc">进入会话时使用的屏幕方向</string>
+    <string name="screen_orientation_auto">自适应</string>
+    <string name="screen_orientation_auto_desc">跟随系统自动旋转</string>
+    <string name="screen_orientation_landscape">横屏</string>
+    <string name="screen_orientation_landscape_desc">强制横屏显示</string>
+    <string name="screen_orientation_portrait">竖屏</string>
+    <string name="screen_orientation_portrait_desc">强制竖屏显示</string>
     <string name="settings_section_app">应用</string>
     <string name="settings_section_other">其他</string>
     <string name="settings_clear_cache">清除缓存</string>

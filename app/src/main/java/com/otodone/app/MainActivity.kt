@@ -3,7 +3,6 @@ package com.otodone.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
@@ -24,9 +23,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.otodone.app.data.PasteShortcut
+import com.otodone.app.data.SessionOrientation
 import com.otodone.app.data.ThemeSettings
 import com.otodone.app.ui.about.AboutScreen
 import com.otodone.app.ui.hosts.HostListRoute
+import com.otodone.app.ui.insets.SystemBars
 import com.otodone.app.ui.session.SessionRoute
 import com.otodone.app.ui.settings.SettingsScreen
 import com.otodone.app.ui.settings.SettingsViewModel
@@ -37,7 +38,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // 取代 enableEdgeToEdge()：wgpro 式的窗口层配置（幂等，只配置一次）
+        SystemBars.configureWindow(window, this)
         setContent {
             // Activity 级 ViewModel：启动时就从 DataStore 读出主题设置，
             // 设置页改动后整个 Compose 树立即重组，实现"改完立刻生效"。
@@ -55,6 +57,7 @@ class MainActivity : ComponentActivity() {
                     onOledBlackChange = settingsViewModel::setOledBlack,
                     onDynamicColorChange = settingsViewModel::setDynamicColor,
                     onPasteShortcutChange = settingsViewModel::setPasteShortcut,
+                    onSessionOrientationChange = settingsViewModel::setSessionOrientation,
                 )
             }
         }
@@ -78,6 +81,7 @@ private fun OtoDoneRoot(
     onOledBlackChange: (Boolean) -> Unit,
     onDynamicColorChange: (Boolean) -> Unit,
     onPasteShortcutChange: (PasteShortcut) -> Unit,
+    onSessionOrientationChange: (SessionOrientation) -> Unit,
 ) {
     val navController = rememberNavController()
     var splashVisible by remember { mutableStateOf(true) }
@@ -98,6 +102,7 @@ private fun OtoDoneRoot(
                     onOledBlackChange = onOledBlackChange,
                     onDynamicColorChange = onDynamicColorChange,
                     onPasteShortcutChange = onPasteShortcutChange,
+                    onSessionOrientationChange = onSessionOrientationChange,
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
                 )
@@ -111,6 +116,7 @@ private fun OtoDoneRoot(
             ) { entry ->
                 SessionRoute(
                     hostId = entry.arguments?.getString("hostId").orEmpty(),
+                    sessionOrientation = settings.sessionOrientation,
                     onBack = { navController.popBackStack() },
                 )
             }

@@ -47,7 +47,45 @@ class RdpSurfaceView @JvmOverloads constructor(
     private var frameTick = -1L
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val destRect = Rect()
-    private var pointerDown = false
+
+    /** 远端当前真正按下的按键 flags（0 = 未按下）；补发释放时用它，别和 armed 状态混淆。 */
+    private var pressedButton = 0
+
+    /** 最后一次成功映射到远端的坐标：补发按键释放时用它，避免指针跳到 (0,0)。 */
+    private var lastRemoteX = 0
+    private var lastRemoteY = 0
+
+    /** 本次手势是否出现过两根及以上手指（用于抑制捏合结束时的误点击）。 */
+    private var sawMultiTouch = false
+
+    /**
+     * 「右键待发」开关：会话页右上角的鼠标右键浮标被按住时为 true。
+     * 此时"未缩放的普通单指点击"发送右键（PTR_FLAGS_BUTTON2），松开浮标即恢复左键。
+     * 双指缩放/滚动与缩放后的单指平移完全不受影响。
+     */
+    var rightClickArmed: Boolean = false
+
+    /** 粘性右键：一次右键点击发完之后回调，便于上层自动解除 armed。 */
+    var onRightClickSent: (() -> Unit)? = null
+
+    /** 单指点击实际要发送的鼠标按键：armed 时是右键，否则左键。 */
+    private val activeButton: Int
+        get() = if (rightClickArmed) RdpKeys.PTR_FLAGS_BUTTON2 else RdpKeys.PTR_FLAGS_BUTTON1
+
+    /**
+     * 若远端当前有鼠标键按下，补发一次按键释放（flags 不带 DOWN）。
+     *
+     * 用最后一次已知的远端坐标发送，绝不能用 (0,0)：否则远端指针会瞬间跳到左上角。
+     * 释放哪一颗键以按下时记录的 [pressedButton] 为准，不受此后 armed 状态变化影响。
+     * 幂等：没有按键按下时什么也不做。
+     */
+    private fun releasePressedButton() {
+        val button = pressedButton
+        if (button == 0) return
+        pressedButton = 0
+        listener?.onPointer(lastRemoteX, lastRemoteY, button)
+        if (button == RdpKeys.PTR_FLAGS_BUTTON2) onRightClickSent?.invoke()
+    }
 
     /** 双指滚动的基准 Y。 */
     private var lastScrollY = 0f
@@ -122,6 +160,26 @@ class RdpSurfaceView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 供会话页浮标调用：在视图坐标 ([x], [y]) 处补一次点击。
+     *
+     * 用于「按住右键浮标 → 同一根手指拖出浮标、进入画面后松手」这条交互：
+     * 浮标手势吃掉了这根手指，画面收不到，于是由浮标在松手时主动补发。
+     */
+    fun clickButtonAt(x: Float, y: Float, button2: Boolean) {
+        if (bitmap == null) return
+        val (rx, ry) = toRemote(x, y) ?: return
+        val button = if (button2) RdpKeys.PTR_FLAGS_BUTTON2 else RdpKeys.PTR_FLAGS_BUTTON1
+        listener?.onPointer(rx, ry, RdpKeys.PTR_FLAGS_MOVE or button or RdpKeys.PTR_FLAGS_DOWN)
+        listener?.onPointer(rx, ry, button)
+    }
+
+    override fun onDetachedFromWindow() {
+        // 视图销毁（退出会话/切换页面）时若还有按键按着，补发释放，避免远端卡在拖拽态。
+        releasePressedButton()
+        super.onDetachedFromWindow()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val bmp = bitmap ?: return
@@ -135,13 +193,23 @@ class RdpSurfaceView @JvmOverloads constructor(
         canvas.drawBitmap(bmp, null, destRect, paint)
     }
 
-    private fun toRemote(x: Float, y: Float): Pair<Int, Int> {
-        val bmp = bitmap ?: return 0 to 0
-        if (bmp.width <= 0 || bmp.height <= 0 || width <= 0 || height <= 0) return 0 to 0
+    /**
+     * 触摸点映射到远端桌面坐标。
+     *
+     * 关键：**落点不在实际显示的远端画面区域内时返回 null**（调用方直接丢弃该事件）。
+     * 以前是把坐标 coerceIn 到图像范围，导致按到画面外的控件（例如浮标）时，
+     * 指针会被硬压到图像最右/最上边缘，表现为"鼠标贴边"。
+     */
+    private fun toRemote(x: Float, y: Float): Pair<Int, Int>? {
+        val bmp = bitmap ?: return null
+        if (bmp.width <= 0 || bmp.height <= 0 || width <= 0 || height <= 0) return null
         val scale = currentScale(bmp)
-        if (scale <= 0f) return 0 to 0
-        val left = (width - bmp.width * scale) / 2f + offsetX
-        val top = (height - bmp.height * scale) / 2f + offsetY
+        if (scale <= 0f) return null
+        val imgW = bmp.width * scale
+        val imgH = bmp.height * scale
+        val left = (width - imgW) / 2f + offsetX
+        val top = (height - imgH) / 2f + offsetY
+        if (x < left || x > left + imgW || y < top || y > top + imgH) return null
         val rx = ((x - left) / scale).toInt().coerceIn(0, bmp.width - 1)
         val ry = ((y - top) / scale).toInt().coerceIn(0, bmp.height - 1)
         return rx to ry
@@ -219,7 +287,11 @@ class RdpSurfaceView @JvmOverloads constructor(
         // 双指 = 滚动远端（滚轮），不移动指针；单指 = 指针移动/点击。
         // 之前用 GestureDetector.onScroll 处理滚轮，会和单指拖动指针同时触发，已移除。
         if (event.pointerCount >= 2) {
-            pointerDown = false
+            // 第一根手指按下时已经给远端发了按键 DOWN；第二根手指进来后本 View 不再转发
+            // 单指移动，必须在这里补发一次释放，否则远端一直以为左键按着（拖拽态），
+            // 双指缩放/滚动会全部错乱。releasePressedButton() 幂等，重复进入无副作用。
+            sawMultiTouch = true
+            releasePressedButton()
             handleTwoFinger(event)
             return true
         }
@@ -228,17 +300,22 @@ class RdpSurfaceView @JvmOverloads constructor(
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                pointerDown = true
+                // 会话页父层（Compose 容器）不再拦截，双指事件必须完整送到本 View。
+                parent?.requestDisallowInterceptTouchEvent(true)
+                sawMultiTouch = false
                 panning = false
                 downAt = SystemClock.uptimeMillis()
                 lastX = event.x
                 lastY = event.y
                 if (!zoomed) {
-                    val (rx, ry) = toRemote(event.x, event.y)
+                    val (rx, ry) = toRemote(event.x, event.y) ?: return true
+                    lastRemoteX = rx
+                    lastRemoteY = ry
+                    pressedButton = activeButton
                     listener?.onPointer(
                         rx,
                         ry,
-                        RdpKeys.PTR_FLAGS_MOVE or RdpKeys.PTR_FLAGS_BUTTON1 or RdpKeys.PTR_FLAGS_DOWN,
+                        RdpKeys.PTR_FLAGS_MOVE or pressedButton or RdpKeys.PTR_FLAGS_DOWN,
                     )
                 }
             }
@@ -254,9 +331,11 @@ class RdpSurfaceView @JvmOverloads constructor(
                     clampOffset()
                     invalidate()
                 } else {
-                    val (rx, ry) = toRemote(event.x, event.y)
-                    val flags = if (pointerDown) {
-                        RdpKeys.PTR_FLAGS_MOVE or RdpKeys.PTR_FLAGS_BUTTON1
+                    val (rx, ry) = toRemote(event.x, event.y) ?: return true
+                    lastRemoteX = rx
+                    lastRemoteY = ry
+                    val flags = if (pressedButton != 0) {
+                        RdpKeys.PTR_FLAGS_MOVE or pressedButton
                     } else {
                         RdpKeys.PTR_FLAGS_MOVE
                     }
@@ -265,23 +344,36 @@ class RdpSurfaceView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val quickTap = SystemClock.uptimeMillis() - downAt < 260L
-                if (zoomed) {
-                    // 缩放后：只有"轻点"（时间短且没拖动）才当成远端左键单击
-                    if (!panning && quickTap) {
-                        val (rx, ry) = toRemote(event.x, event.y)
-                        listener?.onPointer(
-                            rx,
-                            ry,
-                            RdpKeys.PTR_FLAGS_MOVE or RdpKeys.PTR_FLAGS_BUTTON1 or RdpKeys.PTR_FLAGS_DOWN,
-                        )
-                        listener?.onPointer(rx, ry, RdpKeys.PTR_FLAGS_BUTTON1)
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    val quickTap = SystemClock.uptimeMillis() - downAt < 260L
+                    if (zoomed) {
+                        // 缩放后：只有"轻点"（时间短、没拖动、且本次手势没出现过第二根手指）
+                        // 才当成远端左键单击，避免捏合/双指滚动结束时误点一下。
+                        if (!panning && quickTap && !sawMultiTouch) {
+                            toRemote(event.x, event.y)?.let { (rx, ry) ->
+                                lastRemoteX = rx
+                                lastRemoteY = ry
+                                listener?.onPointer(
+                                    rx,
+                                    ry,
+                                    RdpKeys.PTR_FLAGS_MOVE or
+                                        RdpKeys.PTR_FLAGS_BUTTON1 or RdpKeys.PTR_FLAGS_DOWN,
+                                )
+                                listener?.onPointer(rx, ry, RdpKeys.PTR_FLAGS_BUTTON1)
+                            }
+                        }
+                    } else if (pressedButton != 0) {
+                        // 松手点还能映射到画面就更新释放坐标；映射不到（拖出画面外松手）
+                        // 也要在最后一次已知坐标上释放，绝不能把按键留在按下状态。
+                        toRemote(event.x, event.y)?.let { (rx, ry) ->
+                            lastRemoteX = rx
+                            lastRemoteY = ry
+                        }
                     }
-                } else {
-                    val (rx, ry) = toRemote(event.x, event.y)
-                    listener?.onPointer(rx, ry, RdpKeys.PTR_FLAGS_BUTTON1)
                 }
-                pointerDown = false
+                // 无论 ACTION_UP 还是被系统抢占的 ACTION_CANCEL，都要补发按键释放。
+                releasePressedButton()
+                parent?.requestDisallowInterceptTouchEvent(false)
                 panning = false
             }
         }
