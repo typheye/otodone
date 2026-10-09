@@ -1,0 +1,69 @@
+diff --git a/client/Android/cmake/ExternalCJSON.cmake b/client/Android/cmake/ExternalCJSON.cmake
+index 11dac92..6aaa1a7 100644
+--- a/client/Android/cmake/ExternalCJSON.cmake
++++ b/client/Android/cmake/ExternalCJSON.cmake
+@@ -2,7 +2,8 @@ include(ExternalProject)
+ include(DepVersions)
+ 
+ ExternalProject_Add(
+-  cjson DOWNLOAD_EXTRACT_TIMESTAMP OFF SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/cjson
++  cjson DOWNLOAD_EXTRACT_TIMESTAMP OFF SOURCE_DIR ${FREERDP_SOURCE_DIR}/external/cjson
++  DOWNLOAD_COMMAND "" UPDATE_COMMAND ""
+   URL https://github.com/DaveGamble/cJSON/archive/refs/tags/${CJSON_VERSION}.tar.gz URL_HASH ${CJSON_HASH}
+   LIST_SEPARATOR | CMAKE_ARGS ${ANDROID_CMAKE_ARGS} -DENABLE_CJSON_TEST:BOOL=OFF -DENABLE_HIDDEN_SYMBOLS:BOOL=OFF
+                               -DENABLE_CJSON_UNINSTALL:BOOL=OFF -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
+diff --git a/client/Android/cmake/ExternalDeps.cmake b/client/Android/cmake/ExternalDeps.cmake
+index 16081ae..d58b445 100644
+--- a/client/Android/cmake/ExternalDeps.cmake
++++ b/client/Android/cmake/ExternalDeps.cmake
+@@ -1,7 +1,12 @@
+ include(GNUInstallDirs)
+ 
+ # FREERDP_EXTERNAL_PATH points here; FreeRDP appends /${ANDROID_ABI}/ internally
+-set(DEPS_EXTERNAL_ROOT "${CMAKE_CURRENT_LIST_DIR}/../Studio/freeRDPCore/src/main/jniLibs")
++# FREERDP_ANDROID_DEPS_ROOT may be passed via -D to redirect all build output.
++if(DEFINED FREERDP_ANDROID_DEPS_ROOT)
++  set(DEPS_EXTERNAL_ROOT "${FREERDP_ANDROID_DEPS_ROOT}")
++else()
++  set(DEPS_EXTERNAL_ROOT "${CMAKE_CURRENT_LIST_DIR}/../Studio/freeRDPCore/src/main/jniLibs")
++endif()
+ 
+ # All external deps install into this ABI-scoped prefix
+ set(DEPS_INSTALL_DIR "${DEPS_EXTERNAL_ROOT}/${CMAKE_ANDROID_ARCH_ABI}")
+diff --git a/client/Android/cmake/ExternalOpenSSL.cmake b/client/Android/cmake/ExternalOpenSSL.cmake
+index ec7fde4..633a5fa 100644
+--- a/client/Android/cmake/ExternalOpenSSL.cmake
++++ b/client/Android/cmake/ExternalOpenSSL.cmake
+@@ -21,10 +21,13 @@ set(NDK_TOOLCHAIN_BIN "${NDK_ROOT}/toolchains/llvm/prebuilt/${NDK_HOST_PLATFORM}
+ ExternalProject_Add(
+   openssl
+   DOWNLOAD_EXTRACT_TIMESTAMP OFF
+-  SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/openssl
++  # Vendored source, pre-cloned from Gitee mirror (github.com unreachable).
++  SOURCE_DIR ${FREERDP_SOURCE_DIR}/external/openssl
+   BINARY_DIR ${CMAKE_BINARY_DIR}/external/openssl
+   URL https://github.com/openssl/openssl/releases/download/${OPENSSL_VERSION}/${OPENSSL_VERSION}.tar.gz
+   URL_HASH ${OPENSSL_HASH}
++  DOWNLOAD_COMMAND ""
++  UPDATE_COMMAND ""
+   LIST_SEPARATOR |
+   CONFIGURE_COMMAND
+     ${CMAKE_COMMAND} -E env PATH=${NDK_TOOLCHAIN_BIN}:$ENV{PATH} ANDROID_NDK=${NDK_ROOT} ANDROID_NDK_ROOT=${NDK_ROOT}
+diff --git a/client/Android/cmake/ExternalUriparser.cmake b/client/Android/cmake/ExternalUriparser.cmake
+index 1ff69db..70527b1 100644
+--- a/client/Android/cmake/ExternalUriparser.cmake
++++ b/client/Android/cmake/ExternalUriparser.cmake
+@@ -4,9 +4,12 @@ include(DepVersions)
+ ExternalProject_Add(
+   uriparser
+   DOWNLOAD_EXTRACT_TIMESTAMP OFF
+-  SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/uriparser
++  # Vendored source, pre-cloned from Gitee mirror (github.com unreachable).
++  SOURCE_DIR ${FREERDP_SOURCE_DIR}/external/uriparser
+   URL https://github.com/uriparser/uriparser/releases/download/uriparser-${URIPARSER_VERSION}/uriparser-${URIPARSER_VERSION}.tar.xz
+   URL_HASH ${URIPARSER_HASH}
++  DOWNLOAD_COMMAND ""
++  UPDATE_COMMAND ""
+   LIST_SEPARATOR |
+   CMAKE_ARGS ${ANDROID_CMAKE_ARGS} -DURIPARSER_BUILD_DOCS:BOOL=OFF -DURIPARSER_BUILD_TESTS:BOOL=OFF
+              -DURIPARSER_BUILD_TOOLS:BOOL=OFF

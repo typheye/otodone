@@ -353,13 +353,16 @@ class RdpSurfaceView @JvmOverloads constructor(
                             toRemote(event.x, event.y)?.let { (rx, ry) ->
                                 lastRemoteX = rx
                                 lastRemoteY = ry
+                                // 缩放后同样要尊重粘性右键：armed 时发右键而不是左键，
+                                // 否则"放大后点不动右键"（之前这里硬编码了 BUTTON1）。
+                                val button = activeButton
                                 listener?.onPointer(
                                     rx,
                                     ry,
-                                    RdpKeys.PTR_FLAGS_MOVE or
-                                        RdpKeys.PTR_FLAGS_BUTTON1 or RdpKeys.PTR_FLAGS_DOWN,
+                                    RdpKeys.PTR_FLAGS_MOVE or button or RdpKeys.PTR_FLAGS_DOWN,
                                 )
-                                listener?.onPointer(rx, ry, RdpKeys.PTR_FLAGS_BUTTON1)
+                                listener?.onPointer(rx, ry, button)
+                                if (button == RdpKeys.PTR_FLAGS_BUTTON2) onRightClickSent?.invoke()
                             }
                         }
                     } else if (pressedButton != 0) {

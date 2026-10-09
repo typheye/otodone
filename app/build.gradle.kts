@@ -104,4 +104,7 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("junit:junit:4.13.2")
+
+    // 纯 JVM 单元测试：回前台/失败自动重连的判定与退避策略（见 ReconnectPolicyTest）。
+    testImplementation("junit:junit:4.13.2")
 }

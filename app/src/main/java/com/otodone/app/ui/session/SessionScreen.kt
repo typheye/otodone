@@ -9,6 +9,14 @@ import android.view.WindowManager
 import android.widget.Toast
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -53,6 +61,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
@@ -81,10 +93,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.otodone.app.R
 import com.otodone.app.data.RdpHost
 import com.otodone.app.data.SessionOrientation
-import com.otodone.app.rdp.RdpNative
 import com.otodone.app.rdp.RdpState
 import com.otodone.app.rdp.RdpSurfaceView
 import com.otodone.app.ui.hosts.HostListViewModel
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun SessionRoute(
@@ -147,11 +161,17 @@ fun SessionScreen(
     // 全屏沉浸 + 按设置决定屏幕方向 + 内容延伸到异形屏（刘海/挖孔）区域
     SessionWindowEffect(sessionOrientation)
 
-    // 从后台切回前台自动重连：后台期间会话常常已断，回来看不该停在"连接失败"。
+    // 会话页前后台切换：这里只上报「进入后台 / 回到前台」两个事件。
+    // 是否重连、退避多久、连续失败几次停手，全部由 ViewModel 的失败状态监听 +
+    // ReconnectPolicy 判定（失败是事件，不再依赖 ON_RESUME 那一刻的状态快照）。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.reconnectIfNeeded()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
+                Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -390,6 +410,25 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
+/** 多边形加载指示器直径。 */
+private val PolygonLoaderSize = 44.dp
+
+/** 圆周率 Float 版本，避免每帧在 Canvas 里来回转换。 */
+private val PI_F = PI.toFloat()
+
+/**
+ * 会话状态浮层：**不透明**卡片 + 「变形多边形」加载动画 + 一行文案（失败时带重试按钮）。
+ *
+ * 与旧版相比：
+ * - 背景改成实色 [MaterialTheme.colorScheme.surfaceContainerHigh]（不再 copy(alpha)），
+ *   盖在远端画面上不再透底；
+ * - 只保留加载动画 + 一行文字，FreeRDP 版本、原生库错误、多行错误详情全部删除；
+ * - 加载动画是 Material 3 Expressive 风格的自绘变形多边形（本项目的 Compose BOM
+ *   2024.12.01 / material3 1.3.x 还没有官方组件，见 [PolygonLoadingIndicator]）。
+ *
+ * 失败态沿用同一形状但停住动画（[PolygonLoadingIndicator] 的 running = false 分支），
+ * 并保留「重试」按钮，否则三次自动重连停手后用户无路可走。
+ */
 @Composable
 private fun StatusOverlay(state: RdpState, onRetry: () -> Unit) {
     val showOverlay = state is RdpState.Connecting ||
@@ -398,70 +437,55 @@ private fun StatusOverlay(state: RdpState, onRetry: () -> Unit) {
         state is RdpState.Idle
     if (!showOverlay) return
 
-    val title = when (state) {
+    // 只留一行：连接中给出目标地址；失败/断开用简短标题，不再堆技术细节。
+    val line = when (state) {
         is RdpState.Idle -> stringResource(R.string.session_preparing)
         is RdpState.Connecting -> stringResource(R.string.session_connecting, state.endpoint)
         is RdpState.Failed -> stringResource(R.string.session_failed_title)
         is RdpState.Disconnected -> stringResource(R.string.session_disconnected_title)
         is RdpState.Connected -> ""
     }
-    val detail = when (state) {
-        is RdpState.Failed -> state.message
-        is RdpState.Disconnected -> state.message
-        else -> ""
-    }
     val busy = state is RdpState.Connecting || state is RdpState.Idle
     val canRetry = state is RdpState.Failed || state is RdpState.Disconnected
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Surface(
-            // color 带 alpha 后 contentColorFor() 匹配不到任何 scheme 颜色，
-            // 会回退成外层内容色（深色模式下就是黑字）。必须显式给 contentColor。
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            // 必须是不透明实色：旧版 surface.copy(alpha = 0.92f) 会透出远端画面，看不清。
+            // 实色时 contentColorFor() 能正确解析，但这里仍显式给 contentColor 以免回退。
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = MaterialTheme.shapes.large,
-            tonalElevation = 4.dp,
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp,
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                if (busy) {
-                    CircularProgressIndicator(modifier = Modifier.size(36.dp))
-                    Spacer(Modifier.height(14.dp))
-                }
+                PolygonLoadingIndicator(
+                    running = busy,
+                    color = if (busy) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                Spacer(Modifier.height(14.dp))
                 Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = line,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (canRetry) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                     textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                if (detail.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        detail,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    RdpNative.info.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (RdpNative.info.error != null) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        stringResource(R.string.session_native_error, RdpNative.info.error.orEmpty()),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center,
-                    )
-                }
                 if (canRetry) {
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(14.dp))
                     Button(onClick = onRetry) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                         Spacer(Modifier.size(6.dp))
@@ -473,10 +497,92 @@ private fun StatusOverlay(state: RdpState, onRetry: () -> Unit) {
     }
 }
 
-private fun statusLine(state: RdpState, host: RdpHost): String = when (state) {
-    is RdpState.Idle -> host.endpoint
-    is RdpState.Connecting -> host.endpoint
-    is RdpState.Connected -> "${state.width}×${state.height} · FreeRDP"
-    is RdpState.Failed -> host.endpoint
-    is RdpState.Disconnected -> host.endpoint
+/**
+ * Material 3 Expressive 风格的「变形多边形」加载指示器（Compose 自绘，无新依赖）。
+ *
+ * 项目用的 Compose BOM 是 2024.12.01（material3 1.3.x），官方还没有 Expressive 的
+ * 多边形 LoadingIndicator，因此这里用 Canvas 实现：六边形绕中心匀速旋转，同时每个
+ * 顶点的半径、圆角比例与线宽各按不同相位做呼吸式起伏，观感上一边转一边被「揉捏」。
+ *
+ * [running] 为 false 时停在固定姿态（失败态的静态图标），此时不注册任何动画，
+ * 也就不会持续请求重绘。
+ */
+@Composable
+private fun PolygonLoadingIndicator(
+    running: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    if (running) {
+        val transition = rememberInfiniteTransition(label = "polygon-loader")
+        val rotation by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1600, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "rotation",
+        )
+        val breath by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 950, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "breath",
+        )
+        PolygonShape(rotation = rotation, breath = breath, color = color, modifier = modifier)
+    } else {
+        PolygonShape(rotation = 0f, breath = 0.5f, color = color, modifier = modifier)
+    }
+}
+
+/** 绘制一帧变形六边形；[rotation] 0..1 为一圈，[breath] 0..1 为呼吸相位。 */
+@Composable
+private fun PolygonShape(rotation: Float, breath: Float, color: Color, modifier: Modifier) {
+    Canvas(modifier = modifier.size(PolygonLoaderSize)) {
+        val vertices = 6
+        val shortSide = size.minDimension
+        val strokeWidth = shortSide * 0.085f * (0.85f + 0.35f * breath)
+        val maxRadius = shortSide / 2f - strokeWidth
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val baseAngle = rotation * 2f * PI_F - PI_F / 2f
+
+        val points = List(vertices) { index ->
+            val angle = baseAngle + index * 2f * PI_F / vertices
+            // 顶点半径按各自相位呼吸，相邻顶点错开，形成不规则「揉捏」形变。
+            val pulse = 0.80f + 0.20f * (0.5f + 0.5f * sin(breath * 2f * PI_F + index * 1.1f))
+            val radius = maxRadius * pulse
+            Offset(
+                x = center.x + cos(angle).toFloat() * radius,
+                y = center.y + sin(angle).toFloat() * radius,
+            )
+        }
+
+        // 圆角比例也随呼吸变化：在偏尖锐的六边形与圆润的环之间过渡。
+        val corner = 0.18f + 0.30f * breath
+        val path = Path()
+        points.forEachIndexed { index, point ->
+            val previous = points[(index - 1 + vertices) % vertices]
+            val next = points[(index + 1) % vertices]
+            val start = Offset(
+                x = point.x + (previous.x - point.x) * corner,
+                y = point.y + (previous.y - point.y) * corner,
+            )
+            if (index == 0) path.moveTo(start.x, start.y) else path.lineTo(start.x, start.y)
+            val end = Offset(
+                x = point.x + (next.x - point.x) * corner,
+                y = point.y + (next.y - point.y) * corner,
+            )
+            path.quadraticTo(point.x, point.y, end.x, end.y)
+        }
+        path.close()
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+    }
 }

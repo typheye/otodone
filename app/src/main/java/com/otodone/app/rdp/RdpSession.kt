@@ -15,12 +15,13 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** RDP 会话状态。 */
 sealed interface RdpState {
@@ -69,50 +70,122 @@ class RdpSession(
     @Volatile private var lastWidth = 0
     @Volatile private var lastHeight = 0
 
+    /** [bitmapRef] 属于哪个 native 实例；0 表示当前没有可用画面。 */
+    @Volatile private var bitmapInstance = 0L
+
+    /**
+     * 连接生命周期串行化：connect / reconnect / close / detachAndRelease 共用这把锁，
+     * 保证同一时刻只可能有一个 native 实例处于「登记中或存活」状态。
+     * 持锁期间只做轻量工作（[LibFreeRDP.connect] 仅创建 native 连接线程后立即返回）。
+     */
+    private val connectLock = Any()
+
+    /** 释放去重：同一个 native 实例只允许入队释放一次，避免 double free。 */
+    private val releaseLock = Any()
+    private val pendingRelease = mutableSetOf<Long>()
+
+    /** 释放串行化：同一时刻只释放一个 native 实例，绝不重入。 */
+    private val releaseMutex = Mutex()
+
+    /** 连接尝试序号：reconnect() 递增它，让任何在途的旧尝试在登记实例前作废。 */
+    private var connectAttempt = 0
+
+    /** 是否有一次连接正在建立（已 setConnecting 但 native 实例尚未登记）。 */
+    private var connecting = false
+
     // cliprdr 握手等待：native 在服务端成功取走剪贴板数据后回调 OnClipboardDataSent。
     @Volatile private var clipboardSentLatch: CountDownLatch? = null
     @Volatile private var clipboardSentInstance: Long = 0L
 
     private val endpoint: String get() = host?.endpoint.orEmpty()
 
+    /**
+     * 发起一次连接；已有会话、或已有连接在途时直接忽略，重复调用幂等。
+     */
     fun connect(host: RdpHost, width: Int, height: Int) {
-        if (instance != 0L) return
+        val attempt: Int
+        synchronized(connectLock) {
+            if (instance != 0L || connecting) return
+            connecting = true
+            attempt = ++connectAttempt
+        }
+        startConnect(attempt, host, width, height)
+    }
+
+    /**
+     * 强制重建会话：作废在途连接、释放已有 native 实例，再发起全新连接。
+     *
+     * 与 [close] 不同，这里**不**设置 [closed]：同一个 [RdpSession] 重连后必须继续能走
+     * 中文粘贴，而 close() 会把后续 onText() 的粘贴线程永久拦下。
+     */
+    fun reconnect(host: RdpHost, width: Int, height: Int) {
+        synchronized(connectLock) {
+            ++connectAttempt // 让任何在途的旧 connect() 在登记实例前作废
+            connecting = false
+        }
+        // 关键：这里只把旧实例「标记作废 + 交给串行释放」，绝不原地 free。
+        // free 必须等 native 连接线程真正结束（见 releaseInstance）。
+        detachAndRelease()
+        connect(host, width, height)
+    }
+
+    private fun startConnect(attempt: Int, host: RdpHost, width: Int, height: Int) {
         this.host = host
         lastWidth = width
         lastHeight = height
         _state.value = RdpState.Connecting(host.endpoint)
         scope.launch {
+            var orphanInstance = 0L
             try {
                 GlobalApp.install()
                 val bookmark = buildBookmark(host, width, height)
-                val session = GlobalApp.createSession(bookmark, appContext)
-                instance = session.instance
-                session.setUIEventListener(this@RdpSession)
-                LibFreeRDP.setClipboardSentListener(this@RdpSession)
-                GlobalApp.registerSessionListener(instance, this@RdpSession)
-                if (!LibFreeRDP.setConnectionInfo(appContext, instance, bookmark)) {
-                    fail("无法解析 RDP 连接参数")
-                    return@launch
+                val created = GlobalApp.createSession(bookmark, appContext)
+                val inst = created.instance
+                // 登记实例到真正发起连接全程持锁：reconnect()/close() 的清理也走同一把锁，
+                // 不会在 setup 中途把实例释放掉造成 native use-after-free。
+                val accepted = synchronized(connectLock) {
+                    if (attempt != connectAttempt) {
+                        false
+                    } else {
+                        instance = inst
+                        // 每个实例一个带 id 的转发器：native 回调不带实例号，若所有实例共用
+                        // this，旧实例收尾阶段的图形/连接回调会被套到新实例上（例如对一个
+                        // 尚未 gdi_init 的新 context 调 updateGraphics），是崩溃来源之一。
+                        created.setUIEventListener(InstanceUIListener(inst))
+                        LibFreeRDP.setClipboardSentListener(this@RdpSession)
+                        GlobalApp.registerSessionListener(inst, InstanceSessionListener(inst))
+                        if (!LibFreeRDP.setConnectionInfo(appContext, inst, bookmark)) {
+                            fail("无法解析 RDP 连接参数")
+                        } else if (!LibFreeRDP.connect(inst)) {
+                            fail("无法启动 RDP 连接线程")
+                        }
+                        true
+                    }
                 }
-                if (!LibFreeRDP.connect(instance)) {
-                    fail("无法启动 RDP 连接线程")
-                }
+                if (!accepted) orphanInstance = inst
             } catch (t: Throwable) {
                 Log.e(TAG, "connect failed", t)
                 fail("FreeRDP 初始化失败：${t.message ?: t.javaClass.simpleName}")
+            } finally {
+                synchronized(connectLock) {
+                    if (attempt == connectAttempt) connecting = false
+                }
+                if (orphanInstance != 0L) {
+                    // 已被更新的重连取代：释放这个刚创建、尚未注册监听器的实例。
+                    runCatching { GlobalApp.freeSession(orphanInstance) }
+                        .onFailure { Log.e(TAG, "freeSession(orphan) failed", it) }
+                }
             }
         }
     }
 
     fun close() {
         closed = true
-        // 裁剪版 FreeRDP 只有这一处全局剪贴板回调，会话结束时统一摘掉。
-        LibFreeRDP.setClipboardSentListener(null)
-        val inst = instance
-        if (inst != 0L) {
-            runCatching { LibFreeRDP.disconnect(inst) }
+        synchronized(connectLock) {
+            ++connectAttempt // 页面销毁后不再接受任何在途连接结果
+            connecting = false
         }
-        freeLater(0)
+        detachAndRelease()
     }
 
     // ---- 输入：RdpSurfaceView.Listener ----
@@ -235,34 +308,43 @@ class RdpSession(
         if (_state.value is RdpState.Failed) return
         val message = lastError().ifBlank { "会话已断开" }
         _state.value = RdpState.Disconnected(endpoint, message)
-        freeLater(500)
+        detachAndRelease()
     }
 
     // ---- 图形事件（native 线程）----
 
-    override fun OnSettingsChanged(width: Int, height: Int, bpp: Int) {
+    override fun OnSettingsChanged(width: Int, height: Int, bpp: Int) =
+        onSettingsChanged(instance, width, height, bpp)
+
+    override fun OnGraphicsUpdate(x: Int, y: Int, width: Int, height: Int) {
+        val bmp = bitmapRef
+        val inst = instance
+        // 画面必须同时属于当前实例，否则就是旧实例残留回调，直接丢弃。
+        if (inst == 0L || bmp == null || bitmapInstance != inst) return
+        runCatching { LibFreeRDP.updateGraphics(inst, bmp, x, y, width, height) }
+        bumpFrame()
+    }
+
+    override fun OnGraphicsResize(width: Int, height: Int, bpp: Int) =
+        onGraphicsResize(instance, width, height, bpp)
+
+    private fun onSettingsChanged(id: Long, width: Int, height: Int, bpp: Int) {
         val bmp = createBitmap(width, height, bpp) ?: return
         lastWidth = width
         lastHeight = height
         bitmapRef = bmp
+        bitmapInstance = id
         _bitmap.value = bmp
         _state.value = RdpState.Connected(width, height)
         bumpFrame()
     }
 
-    override fun OnGraphicsUpdate(x: Int, y: Int, width: Int, height: Int) {
-        val inst = instance
-        val bmp = bitmapRef
-        if (inst == 0L || bmp == null) return
-        runCatching { LibFreeRDP.updateGraphics(inst, bmp, x, y, width, height) }
-        bumpFrame()
-    }
-
-    override fun OnGraphicsResize(width: Int, height: Int, bpp: Int) {
+    private fun onGraphicsResize(id: Long, width: Int, height: Int, bpp: Int) {
         val bmp = createBitmap(width, height, bpp) ?: return
         lastWidth = width
         lastHeight = height
         bitmapRef = bmp
+        bitmapInstance = id
         _bitmap.value = bmp
         bumpFrame()
     }
@@ -384,7 +466,7 @@ class RdpSession(
     private fun fail(message: String) {
         Log.w(TAG, "RDP failure: $message")
         _state.value = RdpState.Failed(endpoint, message)
-        freeLater(1000)
+        detachAndRelease()
     }
 
     private fun lastError(): String {
@@ -394,20 +476,113 @@ class RdpSession(
     }
 
     /**
-     * 释放 native 实例。freeInstance() 在会话已连接时会阻塞等待断开，
-     * 因此必须放在 IO 线程；同时留一点时间让 native 连接线程收尾，避免
-     * 在连接线程仍在运行时 freerdp_free 造成 use-after-free。
+     * 把当前 native 实例标记作废（清空 [instance]、丢弃画面），再交给后台串行释放。
+     *
+     * 清零之后：旧实例再回调 [InstanceUIListener] / [InstanceSessionListener] 都会因为
+     * 实例号不匹配被丢弃，输入事件也因 [instance] 为 0 直接返回；旧 SessionState 仍留在
+     * GlobalApp 里直到真正释放，但已经影响不到新会话。
      */
-    private fun freeLater(delayMs: Long) {
-        val inst = instance
+    private fun detachAndRelease() {
+        val inst = synchronized(connectLock) {
+            val current = instance
+            instance = 0L
+            connecting = false
+            bitmapRef = null
+            bitmapInstance = 0L
+            current
+        }
+        _bitmap.value = null
         if (inst == 0L) return
-        instance = 0L
+        // 裁剪版 FreeRDP 只有这一处全局剪贴板回调，摘掉后旧实例不会再触发粘贴。
         LibFreeRDP.setClipboardSentListener(null)
         GlobalApp.unregisterSessionListener(inst)
+        releaseInstance(inst)
+    }
+
+    /**
+     * 串行释放一个 native 实例（在 IO 线程上）。
+     *
+     * 为什么不会 use-after-free：
+     * [LibFreeRDP.freeInstance] 在实例仍登记为「存活/正在连接」时会先 freerdp_disconnect，
+     * 再阻塞等待 native 线程报告 OnConnectionFailure/OnDisconnected；只有确认连接线程已走到
+     * 终点，才 freerdp_free（连接期未登记的漏洞已在 LibFreeRDP.connect 里补上）。
+     * 这里再保证两点：1) 同一实例只入队一次（[pendingRelease]）杜绝重复 free；
+     * 2) 释放串行进行（[releaseMutex]），绝不会在释放 A 的同时又释放/复用 A。
+     */
+    private fun releaseInstance(inst: Long) {
+        synchronized(releaseLock) {
+            if (!pendingRelease.add(inst)) return
+        }
         scope.launch {
-            if (delayMs > 0) delay(delayMs)
-            runCatching { GlobalApp.freeSession(inst) }
-                .onFailure { Log.e(TAG, "freeSession failed", it) }
+            releaseMutex.withLock {
+                runCatching { GlobalApp.freeSession(inst) }
+                    .onFailure { Log.e(TAG, "freeSession failed", it) }
+            }
+            synchronized(releaseLock) { pendingRelease.remove(inst) }
+        }
+    }
+
+    /**
+     * 绑定到单个 native 实例的 UI 回调转发器。
+     *
+     * native 图形/连接回调经 JNI 只把实例号传到 Java，而 [LibFreeRDP.UIEventListener]
+     * 接口本身不带实例号；若所有实例共用 [RdpSession] 一个监听器，旧实例收尾期间的
+     * OnGraphicsUpdate 会读到已指向新实例的 [instance]/[bitmapRef]（旧线程、新实例），
+     * 对一个 gdi 尚未初始化的新 context 调 updateGraphics，直接空指针/越界崩溃。
+     * 转发器持有创建它的实例号，一旦不再是当前实例就丢弃全部回调；图形回调还把实例号
+     * 显式传进内部方法，消除「检查后字段又变了」的竞态。
+     */
+    private inner class InstanceUIListener(private val id: Long) :
+        LibFreeRDP.UIEventListener by this@RdpSession {
+
+        override fun OnSettingsChanged(width: Int, height: Int, bpp: Int) {
+            if (instance == id) onSettingsChanged(id, width, height, bpp)
+        }
+
+        override fun OnGraphicsResize(width: Int, height: Int, bpp: Int) {
+            if (instance == id) onGraphicsResize(id, width, height, bpp)
+        }
+
+        override fun OnGraphicsUpdate(x: Int, y: Int, width: Int, height: Int) {
+            val bmp = bitmapRef
+            if (instance != id || bitmapInstance != id || bmp == null) return
+            runCatching { LibFreeRDP.updateGraphics(id, bmp, x, y, width, height) }
+            bumpFrame()
+        }
+
+        override fun OnAuthenticate(
+            username: StringBuilder,
+            domain: StringBuilder,
+            password: StringBuilder,
+        ): Boolean = if (instance == id) {
+            this@RdpSession.OnAuthenticate(username, domain, password)
+        } else {
+            false
+        }
+
+        override fun OnGatewayAuthenticate(
+            username: StringBuilder,
+            domain: StringBuilder,
+            password: StringBuilder,
+        ): Boolean = if (instance == id) {
+            this@RdpSession.OnAuthenticate(username, domain, password)
+        } else {
+            false
+        }
+    }
+
+    /** 绑定到单个 native 实例的连接事件转发器：旧实例的事件不再改动新会话的状态。 */
+    private inner class InstanceSessionListener(private val id: Long) : GlobalApp.SessionEventListener {
+        override fun onConnectionSuccess() {
+            if (instance == id) this@RdpSession.onConnectionSuccess()
+        }
+
+        override fun onConnectionFailure() {
+            if (instance == id) this@RdpSession.onConnectionFailure()
+        }
+
+        override fun onDisconnected() {
+            if (instance == id) this@RdpSession.onDisconnected()
         }
     }
 

@@ -1,0 +1,26 @@
+FreeRDP Android (arm64-v8a, API 26) build manifest
+Generated: legacy.so|162536|45b885d8e95c8178c1bc02fbad85444927c856b8e88d28e061324bf95bb58d21
+NDK: r29-beta1 (29.0.13113456), CMake 3.31.6, Generator: Ninja
+Features: WITH_OPENSSL=ON WITH_CJSON=ON WITH_OPENH264=ON WITH_GFX_H264=ON
+          WITH_FFMPEG=OFF WITH_OPUS=OFF WITH_WEBP=OFF WITH_JPEG=OFF WITH_PNG=OFF
+OpenH264: v2.6.0 (vendored from https://gitee.com/mirrors/openh264, arm64)
+NOTE: libopenh264.so is a new runtime dependency (DT_NEEDED) of libfreerdp3.so.
+
+FILE                                              BYTES  SHA256
+arm64-v8a/libcjson.so                              158752  56c7ced0a20553b0b7ce2bccc40cce34a05392d265bd19d66a39bed508e727c4
+arm64-v8a/libcrypto.so                            6541968  b1a2216884780744c5fd8f88f1f2efd005932792874c6b8e146cc8b95f24c0cd
+arm64-v8a/libfreerdp3.so                         20259584  11d9f5b74917c1005b711b42e669d5bb0140becdca3f64e30a6ad4fcb75bfb50
+arm64-v8a/libfreerdp-android.so                    466696  b444d7bbf59edde0fc196ae79aba488b73546f11b33ae544a43c6fe97c916c44
+arm64-v8a/libfreerdp-client3.so                   3472744  2b0d628e336de2ce3bb4ad1de1b15b92ab4cf68c0f131e3fd5492ac63a9111d7
+arm64-v8a/libopenh264.so                          3021160  2c0e6c2c8573f616b9e57d0fc2b4b4ff35f01393a160201f7c5885596ba45806
+arm64-v8a/libssl.so                               1259720  51a75e1c2d63999e86cd535d52fa882b1ae6f55ec7e3570112b2b0bf5c89be10
+arm64-v8a/liburiparser.so                          584344  9c55c499b844a794e1ca1b640fc9982e9e072dbeab17fa8ffa9699d4285c42a3
+arm64-v8a/libwinpr3.so                            6020824  285e5f4faca7634bc3bfb58c350c8e89093fde102519e4aa4e50dc63dc73ced6
+
+Headers:
+  arm64-v8a/include/cjson
+  arm64-v8a/include/freerdp3
+  arm64-v8a/include/openssl
+  arm64-v8a/include/uriparser
+  arm64-v8a/include/wels
+  arm64-v8a/include/winpr3

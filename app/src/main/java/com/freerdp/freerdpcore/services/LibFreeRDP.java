@@ -37,6 +37,12 @@ public class LibFreeRDP
 
 	private static final Map<Long, Boolean> mInstanceState = new HashMap<>();
 
+	/**
+	 * Upper bound on how long freeInstance() waits for the native connection thread to end.
+	 * If it is exceeded we deliberately leak the context instead of risking a use-after-free.
+	 */
+	private static final long FREE_WAIT_TIMEOUT_MS = 15_000L;
+
 	public static final long VERIFY_CERT_FLAG_NONE = 0x00;
 	public static final long VERIFY_CERT_FLAG_LEGACY = 0x02;
 	public static final long VERIFY_CERT_FLAG_REDIRECT = 0x10;
@@ -210,8 +216,21 @@ public class LibFreeRDP
 		return freerdp_new(context);
 	}
 
+	/**
+	 * Free a native instance.
+	 *
+	 * Correctness note (otoDone): an instance is registered as "alive" before the native
+	 * connection thread is started (see connect()), so freeInstance() always observes it and
+	 * blocks until the thread reports a terminal state (OnConnectionSuccess/Failure/Disconnected).
+	 * Without that registration an instance that is still connecting — or that never successfully
+	 * connected — was freed immediately while android_thread_func was still running on it, i.e. a
+	 * native use-after-free during every failed reconnect. As a last-resort guard the wait is
+	 * bounded: if the thread does not finish in time we deliberately leak the context instead of
+	 * freeing memory that may still be in use.
+	 */
 	public static void freeInstance(long inst)
 	{
+		final long deadline = System.currentTimeMillis() + FREE_WAIT_TIMEOUT_MS;
 		synchronized (mInstanceState)
 		{
 			if (Boolean.TRUE.equals(mInstanceState.get(inst)))
@@ -220,13 +239,22 @@ public class LibFreeRDP
 			}
 			while (Boolean.TRUE.equals(mInstanceState.get(inst)))
 			{
+				final long remaining = deadline - System.currentTimeMillis();
+				if (remaining <= 0)
+				{
+					Log.w(TAG, "freeInstance(" + inst + "): native session did not terminate within "
+					               + FREE_WAIT_TIMEOUT_MS + "ms; leaking instead of freeing");
+					return;
+				}
 				try
 				{
-					mInstanceState.wait();
+					mInstanceState.wait(remaining);
 				}
 				catch (InterruptedException e)
 				{
-					throw new RuntimeException();
+					Thread.currentThread().interrupt();
+					Log.w(TAG, "freeInstance(" + inst + "): interrupted while waiting; not freeing");
+					return;
 				}
 			}
 		}
@@ -241,8 +269,23 @@ public class LibFreeRDP
 			{
 				throw new RuntimeException("instance already connected");
 			}
+			// Register before starting the native thread so freeInstance() can always wait for a
+			// terminal event, even while the instance is still connecting. If thread creation
+			// fails the entry is removed again below.
+			mInstanceState.put(inst, true);
 		}
-		return freerdp_connect(inst);
+
+		final boolean started = freerdp_connect(inst);
+
+		if (!started)
+		{
+			synchronized (mInstanceState)
+			{
+				mInstanceState.remove(inst);
+				mInstanceState.notifyAll();
+			}
+		}
+		return started;
 	}
 
 	public static boolean disconnect(long inst)

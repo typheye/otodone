@@ -35,3 +35,11 @@ google-services.json
 # Others
 /keystore
 keystore.properties
+
+# ---- 原生库（FreeRDP 交叉编译）----
+# 体积大且可再生：源码从 Gitee 拉、构建中间产物随时重建。
+# 值得入库的只有移植脚本与补丁（third_party/*.sh 与 third_party/freerdp-android-out/patches/）。
+third_party/FreeRDP/
+third_party/freerdp-android-build/
+third_party/freerdp-android-out/arm64-v8a/
+third_party/*.log
