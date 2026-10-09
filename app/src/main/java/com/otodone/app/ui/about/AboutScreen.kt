@@ -57,7 +57,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.pm.PackageInfoCompat
@@ -157,7 +159,7 @@ fun AboutScreen(onBack: () -> Unit) {
                     )
                     PreferenceDivider()
                     ActionPreferenceRow(
-                        icon = Icons.Filled.Code,
+                        icon = ImageVector.vectorResource(R.drawable.ic_github),
                         title = stringResource(R.string.about_homepage),
                         subtitle = stringResource(R.string.about_homepage_desc),
                         onClick = { openUrl(context, HOMEPAGE_URL) },
@@ -345,7 +347,7 @@ private fun copyToClipboard(context: Context, text: String) {
 
 private data class OpenSourceItem(val name: String, val author: String, val url: String)
 
-private const val HOMEPAGE_URL = "https://github.com/typheye"
+private const val HOMEPAGE_URL = "https://github.com/typheye/otodone"
 private const val POLICY_URL = "https://www.typheye.cn/policies/"
 private const val LICENSE_URL = "https://github.com/FreeRDP/FreeRDP/blob/master/LICENSE"
 
