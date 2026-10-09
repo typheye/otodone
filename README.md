@@ -24,10 +24,6 @@ otoDone 是一个面向手机的 RDP 远程桌面客户端：用 Kotlin + Jetpac
 |------|------|------|
 | `aosp-app/` | **应用代码**（独立 Git 仓库，唯一代码源） | Kotlin + Compose + Material3；含 vendored FreeRDP 的 Java/JNI 桥（`com.freerdpcore`）与 arm64 `jniLibs` |
 | `main/` | **仓库入口文档** | 本 README，项目总览与技术说明 |
-| `_guide/` | **非代码资料** | 各阶段验证报告与截图（`verify-*`）、agent 指南；不进构建、不参与发布 |
-| `aosp-app/third_party/` | **原生库源码与构建** | FreeRDP 3.x 源码（421M）+ arm64 交叉编译脚本与产物（约 400M）；Gradle 构建**不依赖**它，删除后只是失去重新交叉编译 native 的能力，已编译好的 `.so` 已内置在 `aosp-app/app/src/main/jniLibs/` |
-
-> 根目录保持「代码（aosp-app）/ 文档（main）/ 资料（_guide）/ 原生（third_party）」四块，验证截图等非代码数据一律放 `_guide/`。
 
 ## 功能特性
 
