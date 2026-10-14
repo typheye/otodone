@@ -104,6 +104,7 @@ import kotlin.math.sin
 fun SessionRoute(
     hostId: String,
     sessionOrientation: SessionOrientation,
+    keepScreenOn: Boolean,
     onBack: () -> Unit,
     hostListViewModel: HostListViewModel = viewModel(factory = HostListViewModel.Factory),
     sessionViewModel: RdpSessionViewModel = viewModel(factory = RdpSessionViewModel.Factory),
@@ -116,6 +117,7 @@ fun SessionRoute(
         SessionScreen(
             host = host,
             sessionOrientation = sessionOrientation,
+            keepScreenOn = keepScreenOn,
             viewModel = sessionViewModel,
             onBack = onBack,
         )
@@ -141,6 +143,7 @@ private fun MissingHostScreen(onBack: () -> Unit) {
 fun SessionScreen(
     host: RdpHost,
     sessionOrientation: SessionOrientation,
+    keepScreenOn: Boolean,
     viewModel: RdpSessionViewModel,
     onBack: () -> Unit,
 ) {
@@ -158,8 +161,8 @@ fun SessionScreen(
     // AndroidView（远端画面）在 Compose 根坐标里的原点，用于浮标坐标换算。
     var surfaceOrigin by remember { mutableStateOf(Offset.Zero) }
 
-    // 全屏沉浸 + 按设置决定屏幕方向 + 内容延伸到异形屏（刘海/挖孔）区域
-    SessionWindowEffect(sessionOrientation)
+    // 全屏沉浸 + 按设置决定屏幕方向/保持亮屏 + 内容延伸到异形屏（刘海/挖孔）区域
+    SessionWindowEffect(sessionOrientation, keepScreenOn)
 
     // 会话页前后台切换：这里只上报「进入后台 / 回到前台」两个事件。
     // 是否重连、退避多久、连续失败几次停手，全部由 ViewModel 的失败状态监听 +
@@ -351,14 +354,15 @@ private const val IDLE_BG_ALPHA = 0.32f
 private const val PRESSED_BG_ALPHA = 0.42f
 
 /**
- * 会话期间：隐藏系统栏（沉浸）、允许内容画进异形屏区域、按设置应用屏幕方向；
- * 离开会话时把方向/系统栏/异形屏模式全部还原，主页面不会被留在横屏。
+ * 会话期间：隐藏系统栏（沉浸）、允许内容画进异形屏区域、按设置应用屏幕方向/保持亮屏；
+ * 离开会话时把方向/系统栏/异形屏模式/保持亮屏全部还原，主页面不会被留在横屏、也不会常亮。
  *
  * 方向用 [LaunchedEffect] 单独应用：[orientation] 变化时立即重新下发，会话中切换设置也能实时生效；
  * 进入前的方向只在首次组合时记录一次，退出时原样还原（不被中间的切换污染）。
+ * 保持亮屏同理：开关变化时立即加/清 FLAG_KEEP_SCREEN_ON，退出时在 onDispose 里统一清掉。
  */
 @Composable
-private fun SessionWindowEffect(orientation: SessionOrientation) {
+private fun SessionWindowEffect(orientation: SessionOrientation, keepScreenOn: Boolean) {
     val view = LocalView.current
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -384,6 +388,8 @@ private fun SessionWindowEffect(orientation: SessionOrientation) {
             controller?.show(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation =
                 restoreOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            // 退出会话必须清掉常亮，避免主页/其他页面也一直亮屏。
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             if (window != null && previousCutout != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 window.attributes = window.attributes.apply {
                     layoutInDisplayCutoutMode = previousCutout
@@ -394,6 +400,16 @@ private fun SessionWindowEffect(orientation: SessionOrientation) {
 
     LaunchedEffect(orientation) {
         activity?.requestedOrientation = orientation.toActivityOrientation()
+    }
+
+    // 保持亮屏：会话中改设置也能立刻生效（开→加 flag，关→清 flag）。
+    LaunchedEffect(keepScreenOn) {
+        val window = activity?.window ?: return@LaunchedEffect
+        if (keepScreenOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 }
 

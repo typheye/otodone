@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Palette
 import com.otodone.app.ui.icons.ScreenOrientationIcon
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,6 +73,7 @@ fun SettingsScreen(
     onDynamicColorChange: (Boolean) -> Unit,
     onPasteShortcutChange: (PasteShortcut) -> Unit,
     onSessionOrientationChange: (SessionOrientation) -> Unit,
+    onKeepScreenOnChange: (Boolean) -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -154,6 +156,14 @@ fun SettingsScreen(
             item { SectionLabel(stringResource(R.string.settings_section_session), topSpace = true) }
             item {
                 PreferenceCard {
+                    SwitchPreferenceRow(
+                        icon = Icons.Filled.Lightbulb,
+                        title = stringResource(R.string.settings_keep_screen_on),
+                        subtitle = stringResource(R.string.settings_keep_screen_on_desc),
+                        checked = settings.keepScreenOn,
+                        onCheckedChange = onKeepScreenOnChange,
+                    )
+                    PreferenceDivider()
                     ValuePreferenceRow(
                         icon = ScreenOrientationIcon,
                         title = stringResource(R.string.settings_screen_orientation),

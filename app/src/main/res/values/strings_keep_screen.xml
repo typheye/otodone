@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 设置页「会话」分组：保持亮屏 -->
+    <string name="settings_keep_screen_on">保持亮屏</string>
+    <string name="settings_keep_screen_on_desc">会话期间不让屏幕息屏</string>
+</resources>

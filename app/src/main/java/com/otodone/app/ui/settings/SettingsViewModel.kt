@@ -48,6 +48,10 @@ class SettingsViewModel(private val repository: ThemeSettingsRepository) : ViewM
         viewModelScope.launch { repository.setSessionOrientation(orientation) }
     }
 
+    fun setKeepScreenOn(enabled: Boolean) {
+        viewModelScope.launch { repository.setKeepScreenOn(enabled) }
+    }
+
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

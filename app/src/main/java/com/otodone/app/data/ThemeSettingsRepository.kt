@@ -43,6 +43,8 @@ data class ThemeSettings(
     val pasteShortcut: PasteShortcut = PasteShortcut.CTRL_SHIFT_V,
     /** 进入会话页时的屏幕方向（默认自适应，跟随系统自动旋转）。 */
     val sessionOrientation: SessionOrientation = SessionOrientation.AUTO,
+    /** 会话期间是否保持屏幕常亮（默认开启）。 */
+    val keepScreenOn: Boolean = true,
 ) {
     val themeMode: ThemeMode
         get() = when {
@@ -66,6 +68,7 @@ class ThemeSettingsRepository(private val context: Context) {
     // 新增 key，不动已有 key；存枚举名，读到未知值时回落到默认值。
     private val pasteShortcutKey = stringPreferencesKey("paste_shortcut")
     private val sessionOrientationKey = stringPreferencesKey("session_orientation")
+    private val keepScreenOnKey = booleanPreferencesKey("session_keep_screen_on")
 
     val settings: Flow<ThemeSettings> = context.settingsDataStore.data.map { preferences ->
         ThemeSettings(
@@ -79,6 +82,7 @@ class ThemeSettingsRepository(private val context: Context) {
             sessionOrientation = preferences[sessionOrientationKey]
                 ?.let { name -> SessionOrientation.entries.firstOrNull { it.name == name } }
                 ?: SessionOrientation.AUTO,
+            keepScreenOn = preferences[keepScreenOnKey] ?: true,
         )
     }
 
@@ -104,5 +108,9 @@ class ThemeSettingsRepository(private val context: Context) {
 
     suspend fun setSessionOrientation(orientation: SessionOrientation) {
         context.settingsDataStore.edit { it[sessionOrientationKey] = orientation.name }
+    }
+
+    suspend fun setKeepScreenOn(enabled: Boolean) {
+        context.settingsDataStore.edit { it[keepScreenOnKey] = enabled }
     }
 }
