@@ -45,6 +45,8 @@ data class ThemeSettings(
     val sessionOrientation: SessionOrientation = SessionOrientation.AUTO,
     /** 会话期间是否保持屏幕常亮（默认开启）。 */
     val keepScreenOn: Boolean = true,
+    /** 长按会话页键盘浮标，是否把手机剪贴板粘贴到远端（默认开启）。 */
+    val quickPaste: Boolean = true,
 ) {
     val themeMode: ThemeMode
         get() = when {
@@ -69,6 +71,8 @@ class ThemeSettingsRepository(private val context: Context) {
     private val pasteShortcutKey = stringPreferencesKey("paste_shortcut")
     private val sessionOrientationKey = stringPreferencesKey("session_orientation")
     private val keepScreenOnKey = booleanPreferencesKey("session_keep_screen_on")
+    // 快捷粘贴：独立新 key，默认开启；不动上面已有的任何 key。
+    private val quickPasteKey = booleanPreferencesKey("session_quick_paste")
 
     val settings: Flow<ThemeSettings> = context.settingsDataStore.data.map { preferences ->
         ThemeSettings(
@@ -83,6 +87,7 @@ class ThemeSettingsRepository(private val context: Context) {
                 ?.let { name -> SessionOrientation.entries.firstOrNull { it.name == name } }
                 ?: SessionOrientation.AUTO,
             keepScreenOn = preferences[keepScreenOnKey] ?: true,
+            quickPaste = preferences[quickPasteKey] ?: true,
         )
     }
 
@@ -112,5 +117,9 @@ class ThemeSettingsRepository(private val context: Context) {
 
     suspend fun setKeepScreenOn(enabled: Boolean) {
         context.settingsDataStore.edit { it[keepScreenOnKey] = enabled }
+    }
+
+    suspend fun setQuickPaste(enabled: Boolean) {
+        context.settingsDataStore.edit { it[quickPasteKey] = enabled }
     }
 }

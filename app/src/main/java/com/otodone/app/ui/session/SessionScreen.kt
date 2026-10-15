@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.os.Build
+import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
 import android.view.inputmethod.InputMethodManager
@@ -18,6 +19,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.shape.CircleShape
@@ -57,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +75,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -105,6 +110,7 @@ fun SessionRoute(
     hostId: String,
     sessionOrientation: SessionOrientation,
     keepScreenOn: Boolean,
+    quickPaste: Boolean,
     onBack: () -> Unit,
     hostListViewModel: HostListViewModel = viewModel(factory = HostListViewModel.Factory),
     sessionViewModel: RdpSessionViewModel = viewModel(factory = RdpSessionViewModel.Factory),
@@ -118,6 +124,7 @@ fun SessionRoute(
             host = host,
             sessionOrientation = sessionOrientation,
             keepScreenOn = keepScreenOn,
+            quickPaste = quickPaste,
             viewModel = sessionViewModel,
             onBack = onBack,
         )
@@ -144,6 +151,7 @@ fun SessionScreen(
     host: RdpHost,
     sessionOrientation: SessionOrientation,
     keepScreenOn: Boolean,
+    quickPaste: Boolean,
     viewModel: RdpSessionViewModel,
     onBack: () -> Unit,
 ) {
@@ -242,6 +250,26 @@ fun SessionScreen(
             icon = rememberVectorPainter(Icons.Filled.Keyboard),
             contentDescription = stringResource(R.string.session_keyboard),
             onClick = { surfaceView?.showKeyboard() },
+            // 长按 = 快捷粘贴；单击仍然只弹输入法，两条路径在浮标手势里互斥。
+            onLongClick = {
+                if (!quickPaste) {
+                    // 开关关闭：长按不粘贴、也不弹提示。理由见验证报告：
+                    // 保留「长按」这个手势槽位，避免关掉后长按反而弹键盘的行为分裂；
+                    // 也不给禁用态再加一条会跟着连点刷屏的 Toast。
+                    Log.i(TAG, "quick paste long-press ignored: disabled in settings")
+                } else {
+                    when (viewModel.quickPasteFromClipboard()) {
+                        QuickPasteResult.PASTED ->
+                            showToast(context, R.string.session_quick_paste_done)
+                        QuickPasteResult.EMPTY_CLIPBOARD ->
+                            showToast(context, R.string.session_quick_paste_empty)
+                        QuickPasteResult.NO_SESSION ->
+                            showToast(context, R.string.session_quick_paste_unavailable)
+                        // 防抖窗口内不弹提示：Toast 也不能刷屏。
+                        QuickPasteResult.DEBOUNCED -> Unit
+                    }
+                }
+            },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.displayCutout)
@@ -279,8 +307,12 @@ fun SessionScreen(
  * 交互由 [pointerInput] 统一跟踪：
  * - 按下 → [onPressedChange] true 且背景提亮；
  * - 松手/取消 → [onPressedChange] false；
- * - 松手点在按钮内 → [onClick]（键盘浮标弹出输入法）；
+ * - 松手点在按钮内且不是长按 → [onClick]（键盘浮标弹出输入法）；
+ * - 按住超过系统长按时长 → [onLongClick]（键盘浮标做快捷粘贴），抬起时不再触发 onClick；
  * - 松手点在按钮外 → [onReleaseOutside]（右键浮标把这根手指补成一次右键点击）。
+ *
+ * [onLongClick] 为 null 时完全不检测长按：按住多久抬起都算一次点击，右键浮标沿用旧行为，
+ * 不受本组件的新增长按分支影响。
  *
  * 位置与安全区由调用方通过 [modifier] 传入（`align` + `windowInsetsPadding`）。
  */
@@ -293,10 +325,14 @@ private fun SessionFloatButton(
     armed: Boolean = false,
     onPressedChange: (Boolean) -> Unit = {},
     onClick: () -> Unit = {},
+    /** 长按动作；为 null 表示这个浮标没有长按功能（右键浮标就是 null）。 */
+    onLongClick: (() -> Unit)? = null,
     onReleaseOutside: (Offset) -> Unit = {},
 ) {
     var pressed by remember { mutableStateOf(false) }
     var origin by remember { mutableStateOf(Offset.Zero) }
+    // 设置页可能随时切换快捷粘贴开关：手势必须调用"最新"的回调，而不是首次组合时捕获的那个。
+    val latestOnLongClick by rememberUpdatedState(onLongClick)
     Box(
         modifier = modifier
             .size(44.dp)
@@ -312,31 +348,21 @@ private fun SessionFloatButton(
             .onGloballyPositioned { origin = it.positionInRoot() }
             .semantics { this.contentDescription = contentDescription }
             .pointerInput(Unit) {
-                val buttonSizePx = 44.dp.toPx()
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    pressed = true
-                    onPressedChange(true)
-                    var upRoot: Offset? = null
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        // 无关指针的事件忽略掉即可，不能因此解除按下/待发状态。
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: continue
-                        change.consume()
-                        if (!change.pressed) {
-                            upRoot = origin + change.position
-                            break
-                        }
-                    }
-                    pressed = false
-                    onPressedChange(false)
-                    // 手势被取消时 upRoot 为空：只解除状态，绝不补发点击。
-                    val release = upRoot ?: return@awaitEachGesture
-                    val local = release - origin
-                    val inside = local.x in 0f..buttonSizePx && local.y in 0f..buttonSizePx
-                    if (inside) onClick() else onReleaseOutside(release)
-                }
+                // 用官方 detectTapGestures：tap / longPress / press 三者天生互斥且状态机成熟。
+                // 注意：**不要**在 awaitPointerEventScope 里用 withTimeout 判长按 ——
+                // 超时时内部抛 PointerEventTimeoutCancellationException，即使被 withTimeoutOrNull
+                // 吞掉，指针处理器也已被取消，这个节点的 pointerInput 会整体失效（两个浮标单击全哑）。
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        onPressedChange(true)
+                        tryAwaitRelease()
+                        pressed = false
+                        onPressedChange(false)
+                    },
+                    onTap = { onClick() },
+                    onLongPress = { latestOnLongClick?.invoke() },
+                )
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -352,6 +378,28 @@ private fun SessionFloatButton(
 /** 浮标静止 / 按下时的背景 alpha，两个浮标共用。 */
 private const val IDLE_BG_ALPHA = 0.32f
 private const val PRESSED_BG_ALPHA = 0.42f
+
+/** 会话页调试日志 tag（快捷粘贴的长按/禁用分支走它，便于真机排查）。 */
+private const val TAG = "SessionScreen"
+
+/**
+ * 一直读到 [id] 这根手指抬起，返回抬起时的本地坐标。
+ *
+ * 只关心这一根指针：无关指针的事件直接跳过，不能因此解除按下/长按状态。
+ */
+private suspend fun AwaitPointerEventScope.awaitUpPosition(id: PointerId): Offset? {
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull { it.id == id } ?: continue
+        change.consume()
+        if (!change.pressed) return change.position
+    }
+}
+
+/** 会话页轻提示：统一走 Toast.LENGTH_SHORT，文案资源由调用方给出。 */
+private fun showToast(context: Context, stringRes: Int) {
+    Toast.makeText(context, context.getString(stringRes), Toast.LENGTH_SHORT).show()
+}
 
 /**
  * 会话期间：隐藏系统栏（沉浸）、允许内容画进异形屏区域、按设置应用屏幕方向/保持亮屏；

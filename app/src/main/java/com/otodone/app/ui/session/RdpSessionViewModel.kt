@@ -1,7 +1,11 @@
 package com.otodone.app.ui.session
 
 import android.app.Application
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -22,6 +26,24 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * 快捷粘贴（长按会话页键盘浮标）的结果。UI 据此决定弹哪句 Toast：
+ * [DEBOUNCED] 不弹提示，避免连点/连按时刷屏。
+ */
+enum class QuickPasteResult {
+    /** 已发起粘贴（真正的粘贴在后台异步完成）。 */
+    PASTED,
+
+    /** 剪贴板为空或不是文本。 */
+    EMPTY_CLIPBOARD,
+
+    /** 当前没有可用的远端会话（未连接/已断开/原生库不可用）。 */
+    NO_SESSION,
+
+    /** 距上次触发不足 [RdpSessionViewModel.QUICK_PASTE_DEBOUNCE_MS]，本次忽略。 */
+    DEBOUNCED,
+}
+
 /** 会话页 ViewModel：持有一次 [RdpSession]，UI 只读 StateFlow。 */
 class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -36,6 +58,12 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, PasteShortcut.CTRL_SHIFT_V)
 
     private val session = RdpSession(app, pasteShortcut)
+
+    private val clipboardManager =
+        app.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+
+    /** 上次真正尝试快捷粘贴的时间（elapsedRealtime），用于防抖。 */
+    private var lastQuickPasteAtMs = 0L
 
     val state = session.state
     val bitmap = session.bitmap
@@ -102,6 +130,51 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
         reconnectNow(host, width, height)
     }
 
+    /**
+     * 快捷粘贴：读手机系统剪贴板 → 交给 [RdpSession.pasteViaClipboard] 粘到远端。
+     *
+     * 防抖：距上次触发不足 [QUICK_PASTE_DEBOUNCE_MS] 直接返回 [QuickPasteResult.DEBOUNCED]，
+     * 既拦重复粘贴也拦重复 Toast。时间戳在读取剪贴板之前更新，所以「剪贴板为空」时反复长按
+     * 同样被这个窗口吸收，不会刷屏。
+     *
+     * 必须在主线程调用（Compose 回调即可）：Android 10+ 只有持有焦点的前台应用才能读剪贴板。
+     */
+    fun quickPasteFromClipboard(): QuickPasteResult {
+        val now = SystemClock.elapsedRealtime()
+        val sinceLast = now - lastQuickPasteAtMs
+        if (sinceLast < QUICK_PASTE_DEBOUNCE_MS) {
+            Log.i(TAG, "quick paste ignored: debounced (${sinceLast}ms < ${QUICK_PASTE_DEBOUNCE_MS}ms)")
+            return QuickPasteResult.DEBOUNCED
+        }
+        lastQuickPasteAtMs = now
+
+        val text = readClipboardText()
+        if (text.isNullOrEmpty()) {
+            Log.i(TAG, "quick paste ignored: clipboard empty or non-text")
+            return QuickPasteResult.EMPTY_CLIPBOARD
+        }
+        if (!session.pasteViaClipboard(text)) {
+            Log.i(TAG, "quick paste ignored: no active session")
+            return QuickPasteResult.NO_SESSION
+        }
+        Log.i(TAG, "quick paste started len=${text.length}")
+        return QuickPasteResult.PASTED
+    }
+
+    /** 读主剪贴板里的纯文本；空、无文本（图片/URI 等）或读取失败一律返回 null。 */
+    private fun readClipboardText(): String? {
+        val manager = clipboardManager ?: return null
+        val clip = runCatching { manager.primaryClip }.getOrNull() ?: return null
+        if (clip.itemCount <= 0) return null
+        val description = clip.description
+        val isText = description?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == true ||
+            description?.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML) == true
+        if (!isText) return null
+        return runCatching { clip.getItemAt(0)?.coerceToText(getApplication<Application>())?.toString() }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
     /** ON_STOP：进入后台。后台一律不自动重连（省电省流量），失败留到回前台再按状态补。 */
     fun onAppBackgrounded() {
         isForeground = false
@@ -161,6 +234,16 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        private const val TAG = "QuickPaste"
+
+        /**
+         * 快捷粘贴的最小触发间隔。取 1500ms 的理由：
+         * - 比 cliprdr 握手的 3s 超时短，连续两次「按住→抬起」在正常手速下很难快过 1.5s；
+         * - 与已有的自动重连首次延迟（ReconnectPolicy 1500ms）同一量级，不引入新的时间手感；
+         * - 足够吸收「一次长按被系统拆成多段事件」之类的抖动，又不至于让有意的连粘明显变卡。
+         */
+        const val QUICK_PASTE_DEBOUNCE_MS = 1500L
+
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as Application

@@ -238,6 +238,23 @@ class RdpSession(
         }
 
         Log.i(TAG, "onText(non-ascii) len=${text.length} text=$text")
+        pasteViaClipboard(text)
+    }
+
+    /**
+     * 把 [text] 粘贴到远端：写系统剪贴板 → 广播剪贴板数据 → 等 cliprdr 握手完成 → 发粘贴快捷键。
+     *
+     * 中文输入法（[onText] 的非 ASCII 分支）与「快捷粘贴」共用这一条路径；
+     * 快捷粘贴必须始终走这里，不能按 ASCII/非 ASCII 分流——纯英文逐字符发虚拟键既慢，
+     * 又会把换行、Tab 之类的字符拆坏。
+     *
+     * @return 是否已发起粘贴；false 表示当前没有可用会话或文本为空。粘贴本身是异步完成的。
+     */
+    fun pasteViaClipboard(text: String): Boolean {
+        val inst = instance
+        if (inst == 0L || text.isEmpty()) return false
+
+        Log.i(TAG, "pasteViaClipboard len=${text.length}")
 
         // 1) 先写进 Android 系统剪贴板。FreeRDP 的 cliprdr 在服务端发来
         //    CB_FORMAT_DATA_REQUEST 时最终要从这里取数据；官方客户端的系统剪贴板
@@ -283,6 +300,7 @@ class RdpSession(
             }
             Log.i(TAG, "paste shortcut sent=$ok")
         }.start()
+        return true
     }
 
     /** native 线程回调：服务端已成功取走剪贴板数据（format data response 已回送）。 */

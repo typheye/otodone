@@ -13,6 +13,7 @@ import android.view.KeyEvent
 import android.view.ScaleGestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -115,6 +116,13 @@ class RdpSurfaceView @JvmOverloads constructor(
     private var panning = false
     private var lastX = 0f
     private var lastY = 0f
+
+    /** 放大后单指按下的起点，用来和系统 touchSlop 比较、判定是否已经变成"平移画面"。 */
+    private var downX = 0f
+    private var downY = 0f
+
+    /** 位移超过这个值（像素）就判定为"平移画面"。取系统 touchSlop，别自己拍。 */
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     /** 当前实际缩放：fit 缩放 × 手势缩放。 */
     private fun currentScale(bmp: Bitmap): Float =
@@ -305,9 +313,13 @@ class RdpSurfaceView @JvmOverloads constructor(
                 sawMultiTouch = false
                 panning = false
                 downAt = SystemClock.uptimeMillis()
+                downX = event.x
+                downY = event.y
                 lastX = event.x
                 lastY = event.y
+                // 放大后单指按下先什么都不发：可能演变成平移画面或轻点=远端单击。
                 if (!zoomed) {
+                    // 未放大：维持原行为——按下即按下左键（armed 时右键），拖动=远端拖拽。
                     val (rx, ry) = toRemote(event.x, event.y) ?: return true
                     lastRemoteX = rx
                     lastRemoteY = ry
@@ -322,14 +334,21 @@ class RdpSurfaceView @JvmOverloads constructor(
 
             MotionEvent.ACTION_MOVE -> {
                 if (zoomed) {
-                    // 缩放后：单指拖动 = 平移画面，不再映射成远端输入
-                    panning = true
-                    offsetX += event.x - lastX
-                    offsetY += event.y - lastY
+                    // 缩放后：位移超过系统 touchSlop 才判定为"平移画面"，
+                    // 阈值以内视为轻点前的微小抖动，避免误判成拖动。
+                    val dx = event.x - lastX
+                    val dy = event.y - lastY
                     lastX = event.x
                     lastY = event.y
-                    clampOffset()
-                    invalidate()
+                    if (!panning && hypot(event.x - downX, event.y - downY) > touchSlop) {
+                        panning = true
+                    }
+                    if (panning) {
+                        offsetX += dx
+                        offsetY += dy
+                        clampOffset()
+                        invalidate()
+                    }
                 } else {
                     val (rx, ry) = toRemote(event.x, event.y) ?: return true
                     lastRemoteX = rx

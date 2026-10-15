@@ -52,6 +52,10 @@ class SettingsViewModel(private val repository: ThemeSettingsRepository) : ViewM
         viewModelScope.launch { repository.setKeepScreenOn(enabled) }
     }
 
+    fun setQuickPaste(enabled: Boolean) {
+        viewModelScope.launch { repository.setQuickPaste(enabled) }
+    }
+
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

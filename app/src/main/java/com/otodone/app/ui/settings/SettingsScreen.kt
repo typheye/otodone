@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.ContentPasteGo
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
@@ -74,6 +75,7 @@ fun SettingsScreen(
     onPasteShortcutChange: (PasteShortcut) -> Unit,
     onSessionOrientationChange: (SessionOrientation) -> Unit,
     onKeepScreenOnChange: (Boolean) -> Unit,
+    onQuickPasteChange: (Boolean) -> Unit,
     onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -162,6 +164,14 @@ fun SettingsScreen(
                         subtitle = stringResource(R.string.settings_keep_screen_on_desc),
                         checked = settings.keepScreenOn,
                         onCheckedChange = onKeepScreenOnChange,
+                    )
+                    PreferenceDivider()
+                    SwitchPreferenceRow(
+                        icon = Icons.Filled.ContentPasteGo,
+                        title = stringResource(R.string.settings_quick_paste),
+                        subtitle = stringResource(R.string.settings_quick_paste_desc),
+                        checked = settings.quickPaste,
+                        onCheckedChange = onQuickPasteChange,
                     )
                     PreferenceDivider()
                     ValuePreferenceRow(

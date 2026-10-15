@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
                     onPasteShortcutChange = settingsViewModel::setPasteShortcut,
                     onSessionOrientationChange = settingsViewModel::setSessionOrientation,
                     onKeepScreenOnChange = settingsViewModel::setKeepScreenOn,
+                    onQuickPasteChange = settingsViewModel::setQuickPaste,
                 )
             }
         }
@@ -84,6 +85,7 @@ private fun OtoDoneRoot(
     onPasteShortcutChange: (PasteShortcut) -> Unit,
     onSessionOrientationChange: (SessionOrientation) -> Unit,
     onKeepScreenOnChange: (Boolean) -> Unit,
+    onQuickPasteChange: (Boolean) -> Unit,
 ) {
     val navController = rememberNavController()
     var splashVisible by remember { mutableStateOf(true) }
@@ -106,6 +108,7 @@ private fun OtoDoneRoot(
                     onPasteShortcutChange = onPasteShortcutChange,
                     onSessionOrientationChange = onSessionOrientationChange,
                     onKeepScreenOnChange = onKeepScreenOnChange,
+                    onQuickPasteChange = onQuickPasteChange,
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
                 )
@@ -121,6 +124,7 @@ private fun OtoDoneRoot(
                     hostId = entry.arguments?.getString("hostId").orEmpty(),
                     sessionOrientation = settings.sessionOrientation,
                     keepScreenOn = settings.keepScreenOn,
+                    quickPaste = settings.quickPaste,
                     onBack = { navController.popBackStack() },
                 )
             }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  快捷粘贴（长按会话页键盘浮标，把手机系统剪贴板粘贴到远端）相关文案。
+
+  单独成一个资源文件，避免和 strings.xml 的其它改动挤在一起产生合并冲突；
+  文件名与内容一一对应，后续同类小功能也建议各自独立。
+-->
+<resources>
+    <string name="settings_quick_paste">快捷粘贴</string>
+    <string name="settings_quick_paste_desc">长按会话页键盘按钮粘贴手机剪贴板</string>
+    <string name="session_quick_paste_done">已粘贴到远端</string>
+    <string name="session_quick_paste_empty">剪贴板没有可粘贴的文本</string>
+    <string name="session_quick_paste_unavailable">当前没有可用的远端连接</string>
+</resources>
