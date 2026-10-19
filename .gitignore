@@ -44,3 +44,6 @@ third_party/FreeRDP/
 third_party/freerdp-android-build/
 third_party/freerdp-android-out/arm64-v8a/
 third_party/*.log
+
+# Kotlin 编译会话缓存
+.kotlin/

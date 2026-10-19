@@ -56,6 +56,14 @@ class SettingsViewModel(private val repository: ThemeSettingsRepository) : ViewM
         viewModelScope.launch { repository.setQuickPaste(enabled) }
     }
 
+    fun setShowMouseButton(enabled: Boolean) {
+        viewModelScope.launch { repository.setShowMouseButton(enabled) }
+    }
+
+    fun setShowKeyboardButton(enabled: Boolean) {
+        viewModelScope.launch { repository.setShowKeyboardButton(enabled) }
+    }
+
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

@@ -89,10 +89,11 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** 已排期但还没执行的自动重连；新请求先取消旧的，保证同一时刻只有一个在途。 */
     private var autoReconnectJob: Job? = null
 
+    /** 已排期但还没下发的窗口尺寸变更（防抖用）。 */
+    private var viewportJob: Job? = null
+
     init {
-        // 关键修复：失败是事件，不再依赖 ON_RESUME 那一刻的状态快照。
-        // 只要在前台看到 Failed/Disconnected，就按退避策略自动重连；
-        // 这样即使失败状态比 ON_RESUME 晚到，也一定会被兜住。
+        // 失败/断开只用来复位状态；自动重连由 [AUTO_RECONNECT_ENABLED] 统一控制。
         viewModelScope.launch {
             session.state.collect { current ->
                 when (current) {
@@ -103,7 +104,7 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
 
                     is RdpState.Failed, is RdpState.Disconnected -> {
                         reconnectInFlight = false
-                        scheduleAutoReconnect()
+                        if (AUTO_RECONNECT_ENABLED) scheduleAutoReconnect()
                     }
 
                     else -> Unit
@@ -112,6 +113,10 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 只负责"建会话"。窗口尺寸**不参与**调用条件（SessionScreen 的 LaunchedEffect 也不把
+     * 尺寸当 key）：键盘弹出/收起、窗口尺寸抖动都不会按新尺寸重连。
+     */
     fun connect(host: RdpHost, width: Int, height: Int) {
         lastHost = host
         lastWidth = width
@@ -119,6 +124,31 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (startedHostId == host.id) return
         startedHostId = host.id
         session.connect(host, width, height)
+    }
+
+    /**
+     * 窗口尺寸变化（旋转 / 分屏 / 大小窗）时调用：会话已建立的话，把新尺寸同步给远端
+     * （MS-RDPEDISP 的 monitor layout），让远端分辨率跟着窗口走。
+     *
+     * 键盘弹出不会改变窗口尺寸（会话页是 adjustNothing），所以这里不会因键盘而抖动。
+     */
+    fun onViewportChanged(width: Int, height: Int) {
+        lastWidth = width
+        lastHeight = height
+        if (startedHostId == null) return
+        scheduleRemoteResize(width, height)
+    }
+
+    /**
+     * 防抖：旋转/分屏过程中尺寸可能连续变好几帧，只发最后一次。尺寸本身只由窗口决定，
+     * 与快捷键浮层之类的覆盖层无关。
+     */
+    private fun scheduleRemoteResize(width: Int, height: Int) {
+        viewportJob?.cancel()
+        viewportJob = viewModelScope.launch {
+            delay(VIEWPORT_RESIZE_DEBOUNCE_MS)
+            session.resizeRemoteDisplay(width, height)
+        }
     }
 
     /** 用户手动重试：重置退避计数，立即重建会话。 */
@@ -153,12 +183,29 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
             Log.i(TAG, "quick paste ignored: clipboard empty or non-text")
             return QuickPasteResult.EMPTY_CLIPBOARD
         }
-        if (!session.pasteViaClipboard(text)) {
+        // 粘贴链路内部已经逐步兜底（剪贴板/线程/ native 都有 runCatching），这里再包一层，
+        // 保证任何意外都只是"这次没粘上"，而不是把 UI 线程带崩。
+        val started = runCatching { session.pasteViaClipboard(text) }
+            .onFailure { Log.w(TAG, "quick paste failed", it) }
+            .getOrDefault(false)
+        if (!started) {
             Log.i(TAG, "quick paste ignored: no active session")
             return QuickPasteResult.NO_SESSION
         }
         Log.i(TAG, "quick paste started len=${text.length}")
         return QuickPasteResult.PASTED
+    }
+
+    /**
+     * 会话页键盘上方快捷键浮层的唯一出口：走和真实键盘完全相同的 [RdpSession.onVirtualKey] 通路。
+     *
+     * 组合键由调用方按「修饰键按下 → 主键按下/抬起 → 修饰键抬起」的顺序拆成多次调用
+     * （见 ShortcutBar 的 send()）；没有可用会话时 onVirtualKey 自己会忽略。
+     */
+    fun sendVirtualKey(virtualKey: Int, down: Boolean) {
+        // onVirtualKey 内部已经判空 instance 并 runCatching，这里再兜一层，避免异常冒到 UI。
+        runCatching { session.onVirtualKey(virtualKey, down) }
+            .onFailure { Log.w(TAG, "sendVirtualKey failed", it) }
     }
 
     /** 读主剪贴板里的纯文本；空、无文本（图片/URI 等）或读取失败一律返回 null。 */
@@ -190,13 +237,15 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun onAppForegrounded() {
         isForeground = true
+        if (!AUTO_RECONNECT_ENABLED) return
         if (state.value is RdpState.Failed || state.value is RdpState.Disconnected) {
             scheduleAutoReconnect()
         }
     }
 
-    /** 连接失败/断开：仅当前台时按退避策略自动重连，避免后台空耗电和流量。 */
+    /** 连接失败/断开：仅当前台时按退避策略自动重连（受 [AUTO_RECONNECT_ENABLED] 控制）。 */
     private fun scheduleAutoReconnect() {
+        if (!AUTO_RECONNECT_ENABLED) return
         if (!isForeground) return
         val host = lastHost ?: return
         val width = lastWidth
@@ -230,6 +279,7 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         autoReconnectJob?.cancel()
+        viewportJob?.cancel()
         session.close()
     }
 
@@ -243,6 +293,18 @@ class RdpSessionViewModel(app: Application) : AndroidViewModel(app) {
          * - 足够吸收「一次长按被系统拆成多段事件」之类的抖动，又不至于让有意的连粘明显变卡。
          */
         const val QUICK_PASTE_DEBOUNCE_MS = 1500L
+
+        /**
+         * 自动重连总开关（当前**关闭**）。
+         *
+         * 关闭后：连接失败 / 会话断开就停在失败态，只有用户点「重试」才会重连；
+         * 回到前台也不会自动补一次。[ReconnectPolicy] 与退避逻辑保留（有单元测试覆盖），
+         * 需要恢复时把它改成 true 即可，其它调用点不用动。
+         */
+        const val AUTO_RECONNECT_ENABLED = false
+
+        /** 窗口尺寸变化的防抖窗口：旋转过程会连续变几帧，只把最后的尺寸发给服务端。 */
+        private const val VIEWPORT_RESIZE_DEBOUNCE_MS = 300L
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

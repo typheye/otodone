@@ -60,6 +60,8 @@ class MainActivity : ComponentActivity() {
                     onSessionOrientationChange = settingsViewModel::setSessionOrientation,
                     onKeepScreenOnChange = settingsViewModel::setKeepScreenOn,
                     onQuickPasteChange = settingsViewModel::setQuickPaste,
+                    onShowMouseButtonChange = settingsViewModel::setShowMouseButton,
+                    onShowKeyboardButtonChange = settingsViewModel::setShowKeyboardButton,
                 )
             }
         }
@@ -86,6 +88,8 @@ private fun OtoDoneRoot(
     onSessionOrientationChange: (SessionOrientation) -> Unit,
     onKeepScreenOnChange: (Boolean) -> Unit,
     onQuickPasteChange: (Boolean) -> Unit,
+    onShowMouseButtonChange: (Boolean) -> Unit,
+    onShowKeyboardButtonChange: (Boolean) -> Unit,
 ) {
     val navController = rememberNavController()
     var splashVisible by remember { mutableStateOf(true) }
@@ -125,6 +129,11 @@ private fun OtoDoneRoot(
                     sessionOrientation = settings.sessionOrientation,
                     keepScreenOn = settings.keepScreenOn,
                     quickPaste = settings.quickPaste,
+                    // 「三」菜单 -> 布局：两个浮标的显示开关（DataStore 持久化，改完立即生效）
+                    showMouseButton = settings.showMouseButton,
+                    showKeyboardButton = settings.showKeyboardButton,
+                    onShowMouseButtonChange = onShowMouseButtonChange,
+                    onShowKeyboardButtonChange = onShowKeyboardButtonChange,
                     onBack = { navController.popBackStack() },
                 )
             }

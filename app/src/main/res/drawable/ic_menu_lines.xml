@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 会话页右上角的「三」（汉堡）图标：三横线，写法与 ic_settings.xml / ic_mouse_right.xml 一致
+     （24dp 视口、字面量颜色）。Compose 的 Icon 会按 tint / LocalContentColor 重新着色，
+     所以这里的白色只是"不受主题影响时的原色"，会话页上始终显示为白色以适配远端画面。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 三条等距横线，圆头端点；线宽 2 与 Material 自带的 Menu 图标一致。 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M4,7 L20,7 M4,12 L20,12 M4,17 L20,17" />
+</vector>

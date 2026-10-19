@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.util.Log
 import com.freerdp.freerdpcore.application.GlobalApp
 import com.freerdp.freerdpcore.domain.BookmarkBase
@@ -87,6 +88,9 @@ class RdpSession(
     /** 释放串行化：同一时刻只释放一个 native 实例，绝不重入。 */
     private val releaseMutex = Mutex()
 
+    /** native 调用失败的日志节流表（类别 -> 上次打印时间）。 */
+    private val nativeFailureLogAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /** 连接尝试序号：reconnect() 递增它，让任何在途的旧尝试在登记实例前作废。 */
     private var connectAttempt = 0
 
@@ -96,6 +100,20 @@ class RdpSession(
     // cliprdr 握手等待：native 在服务端成功取走剪贴板数据后回调 OnClipboardDataSent。
     @Volatile private var clipboardSentLatch: CountDownLatch? = null
     @Volatile private var clipboardSentInstance: Long = 0L
+
+    /**
+     * 最近一次成功下发给服务端的显示器布局（去重：同一个尺寸不重复发 PDU）。
+     * 0 表示还没发过（或刚换了实例，需要在 [startConnect]/[detachAndRelease] 里清零）。
+     */
+    @Volatile private var requestedWidth = 0
+    @Volatile private var requestedHeight = 0
+
+    /**
+     * 连接建立**之前**窗口就改过尺寸时（典型：强制横屏那次旋转比连接先完成），
+     * 先把目标尺寸记在这里，等 [onConnectionSuccess] 再补发一次布局。
+     */
+    @Volatile private var pendingWidth = 0
+    @Volatile private var pendingHeight = 0
 
     private val endpoint: String get() = host?.endpoint.orEmpty()
 
@@ -133,6 +151,11 @@ class RdpSession(
         this.host = host
         lastWidth = width
         lastHeight = height
+        // 新实例还没有任何已下发的布局；pending 先对齐本次连接尺寸（多一次无意义的 PDU 不发）。
+        requestedWidth = 0
+        requestedHeight = 0
+        pendingWidth = width
+        pendingHeight = height
         _state.value = RdpState.Connecting(host.endpoint)
         scope.launch {
             var orphanInstance = 0L
@@ -194,12 +217,17 @@ class RdpSession(
         val inst = instance
         if (inst == 0L) return
         runCatching { LibFreeRDP.sendCursorEvent(inst, x, y, flags) }
+            .onFailure { logNativeFailure("sendCursorEvent", it) }
     }
 
     override fun onVirtualKey(virtualKey: Int, down: Boolean) {
         val inst = instance
         if (inst == 0L) return
-        runCatching { LibFreeRDP.sendKeyEvent(inst, virtualKey, down) }
+        // 扩展键（方向键 / Home / End / PgUp / PgDn / Ins / Del / Win）必须带 KBDEXT 才能
+        // 查到扫描码，否则 WinPR 返回 0、远端完全没反应（见 RdpKeys.KBDEXT 的说明）。
+        runCatching {
+            LibFreeRDP.sendKeyEvent(inst, RdpKeys.withExtendedFlag(virtualKey), down)
+        }.onFailure { logNativeFailure("sendKeyEvent", it) }
     }
 
     override fun onUnicode(codePoint: Int) {
@@ -210,10 +238,11 @@ class RdpSession(
         // 中文等非 ASCII 才用 unicode 注入通道。
         val virtualKey = RdpKeys.asciiToVirtualKey(codePoint)
         if (virtualKey != null) {
+            val key = RdpKeys.withExtendedFlag(virtualKey)
             runCatching {
-                LibFreeRDP.sendKeyEvent(inst, virtualKey, true)
-                LibFreeRDP.sendKeyEvent(inst, virtualKey, false)
-            }
+                LibFreeRDP.sendKeyEvent(inst, key, true)
+                LibFreeRDP.sendKeyEvent(inst, key, false)
+            }.onFailure { logNativeFailure("sendKeyEvent(unicode-ascii)", it) }
             return
         }
 
@@ -224,7 +253,7 @@ class RdpSession(
             } else {
                 Log.w(TAG, "Remote does not support unicode input, dropped: $codePoint")
             }
-        }
+        }.onFailure { logNativeFailure("sendUnicodeKeyEvent", it) }
     }
 
     override fun onText(text: String) {
@@ -238,36 +267,45 @@ class RdpSession(
         }
 
         Log.i(TAG, "onText(non-ascii) len=${text.length} text=$text")
-        pasteViaClipboard(text)
+        // 输入法这条链路**不写**手机系统剪贴板（见 pasteViaClipboard 的注释）。
+        pasteViaClipboard(text, writeSystemClipboard = false)
     }
 
     /**
-     * 把 [text] 粘贴到远端：写系统剪贴板 → 广播剪贴板数据 → 等 cliprdr 握手完成 → 发粘贴快捷键。
+     * 把 [text] 粘贴到远端：广播剪贴板数据 → 等 cliprdr 握手完成 → 发粘贴快捷键。
      *
      * 中文输入法（[onText] 的非 ASCII 分支）与「快捷粘贴」共用这一条路径；
      * 快捷粘贴必须始终走这里，不能按 ASCII/非 ASCII 分流——纯英文逐字符发虚拟键既慢，
      * 又会把换行、Tab 之类的字符拆坏。
      *
+     * [writeSystemClipboard] 控制要不要顺手写手机系统剪贴板：
+     * - **cliprdr 的数据源不是 Android 系统剪贴板**，而是 FreeRDP 自己的 wClipboard：
+     *   android_event.c 的 `ClipboardSetData(afc->clipboard, ...)` 由 sendClipboardData 写入，
+     *   服务端来取时 android_cliprdr.c 从 afc->clipboard 读。所以这条链路**不需要**写系统剪贴板。
+     * - 输入法自动粘贴（[onText]）传 false：以前顺手写会把输入法的断词/候选串一股脑塞进
+     *   手机剪贴板历史，纯副作用；远端粘贴行为不受影响。
+     * - 「快捷粘贴」保持 true（不改既有行为，文本本来就是用户从剪贴板选的）。
+     *
      * @return 是否已发起粘贴；false 表示当前没有可用会话或文本为空。粘贴本身是异步完成的。
      */
-    fun pasteViaClipboard(text: String): Boolean {
+    fun pasteViaClipboard(text: String, writeSystemClipboard: Boolean = true): Boolean {
         val inst = instance
         if (inst == 0L || text.isEmpty()) return false
 
-        Log.i(TAG, "pasteViaClipboard len=${text.length}")
+        Log.i(TAG, "pasteViaClipboard len=${text.length} writeSystemClipboard=$writeSystemClipboard")
 
-        // 1) 先写进 Android 系统剪贴板。FreeRDP 的 cliprdr 在服务端发来
-        //    CB_FORMAT_DATA_REQUEST 时最终要从这里取数据；官方客户端的系统剪贴板
-        //    监听在裁剪 vendored 代码时被删掉了，所以这里手动补上这一步。
-        val clipOk = runCatching {
-            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            cm?.setPrimaryClip(ClipData.newPlainText("otodone", text))
-            cm != null
-        }.getOrElse {
-            Log.w(TAG, "set system clipboard failed", it)
-            false
+        // 1) 可选：写手机系统剪贴板（**不是** cliprdr 的数据源，见上面的说明）。
+        if (writeSystemClipboard) {
+            val clipOk = runCatching {
+                val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText("otodone", text))
+                cm != null
+            }.getOrElse {
+                Log.w(TAG, "set system clipboard failed", it)
+                false
+            }
+            Log.i(TAG, "system clipboard set=$clipOk")
         }
-        Log.i(TAG, "system clipboard set=$clipOk")
 
         // 2) 登记握手等待，然后向远端剪贴板通道广播格式列表。
         //    必须在 sendClipboardData 之前登记：回调来自 native 线程，若它抢在登记前到达，
@@ -275,7 +313,9 @@ class RdpSession(
         val latch = CountDownLatch(1)
         clipboardSentInstance = inst
         clipboardSentLatch = latch
-        val pushed = runCatching { LibFreeRDP.sendClipboardData(inst, text) }.getOrDefault(false)
+        val pushed = runCatching { LibFreeRDP.sendClipboardData(inst, text) }
+            .onFailure { logNativeFailure("sendClipboardData", it) }
+            .getOrDefault(false)
         Log.i(TAG, "sendClipboardData=$pushed")
 
         // 3) 等服务端来取剪贴板数据（CB_FORMAT_DATA_REQUEST）；native 在成功回送后回调
@@ -303,6 +343,43 @@ class RdpSession(
         return true
     }
 
+    // ---- 远端分辨率跟随窗口 ----
+
+    /**
+     * 窗口尺寸变化（旋转/分屏/大小窗）后，把新的显示器布局下发给服务端。
+     *
+     * 为什么需要：会话建立后如果我们只是把 View 变宽变高，远端画面仍是旧方向的分辨率，
+     * [RdpSurfaceView] 会按 fit-center 把它缩成屏幕中间的一条窄带（真机旋转后就是这样）。
+     * MS-RDPEDISP 正是「客户端把 monitor layout 告诉服务端」的通道（LibFreeRDP 已带 /disp）。
+     * 服务端不认这个 PDU 时 SendMonitorLayout 返回失败，这里静默忽略——不会比现状更差。
+     *
+     * 只应在会话已连接后调用；未连接时先记住尺寸，等 [onConnectionSuccess] 补发。
+     */
+    fun resizeRemoteDisplay(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        pendingWidth = width
+        pendingHeight = height
+        if (_state.value !is RdpState.Connected) return
+        sendMonitorLayout(width, height)
+    }
+
+    /** 真正下发 monitor layout；同一尺寸只发一次，避免旋转过程中连发。 */
+    private fun sendMonitorLayout(width: Int, height: Int) {
+        val inst = instance
+        if (inst == 0L) return
+        if (width == requestedWidth && height == requestedHeight) return
+        val w = width.coerceIn(MIN_DISPLAY_SIZE, MAX_DISPLAY_SIZE)
+        val h = height.coerceIn(MIN_DISPLAY_SIZE, MAX_DISPLAY_SIZE)
+        val ok = runCatching { LibFreeRDP.sendMonitorLayout(inst, w, h) }
+            .onFailure { logNativeFailure("sendMonitorLayout", it) }
+            .getOrDefault(false)
+        if (ok) {
+            requestedWidth = width
+            requestedHeight = height
+        }
+        Log.i(TAG, "sendMonitorLayout(" + w + "x" + h + ") ok=" + ok)
+    }
+
     /** native 线程回调：服务端已成功取走剪贴板数据（format data response 已回送）。 */
     override fun OnClipboardDataSent(instanceId: Long) {
         if (instanceId != clipboardSentInstance) return
@@ -315,6 +392,13 @@ class RdpSession(
         Log.i(TAG, "RDP connection succeeded")
         if (lastWidth > 0 && lastHeight > 0) {
             _state.value = RdpState.Connected(lastWidth, lastHeight)
+        }
+        // 连接在途期间窗口尺寸变了（强制横屏、分屏、旋转）：现在 disp 通道才真正可用，
+        // 补发一次布局，否则远端还是旧方向的分辨率，画面会被 fit-center 缩成一条窄带。
+        val w = pendingWidth
+        val h = pendingHeight
+        if (w > 0 && h > 0 && (w != lastWidth || h != lastHeight)) {
+            sendMonitorLayout(w, h)
         }
     }
 
@@ -340,6 +424,7 @@ class RdpSession(
         // 画面必须同时属于当前实例，否则就是旧实例残留回调，直接丢弃。
         if (inst == 0L || bmp == null || bitmapInstance != inst) return
         runCatching { LibFreeRDP.updateGraphics(inst, bmp, x, y, width, height) }
+            .onFailure { logNativeFailure("updateGraphics", it) }
         bumpFrame()
     }
 
@@ -347,6 +432,8 @@ class RdpSession(
         onGraphicsResize(instance, width, height, bpp)
 
     private fun onSettingsChanged(id: Long, width: Int, height: Int, bpp: Int) {
+        // 旧实例的残留回调：instance 已经换人就直接丢弃，别用旧尺寸覆盖新会话的状态。
+        if (id == 0L || id != instance) return
         val bmp = createBitmap(width, height, bpp) ?: return
         lastWidth = width
         lastHeight = height
@@ -358,6 +445,7 @@ class RdpSession(
     }
 
     private fun onGraphicsResize(id: Long, width: Int, height: Int, bpp: Int) {
+        if (id == 0L || id != instance) return
         val bmp = createBitmap(width, height, bpp) ?: return
         lastWidth = width
         lastHeight = height
@@ -490,7 +578,23 @@ class RdpSession(
     private fun lastError(): String {
         val inst = instance
         if (inst == 0L) return ""
-        return runCatching { LibFreeRDP.getLastError(inst).orEmpty() }.getOrDefault("")
+        return runCatching { LibFreeRDP.getLastError(inst).orEmpty() }
+            .onFailure { logNativeFailure("getLastError", it) }
+            .getOrDefault("")
+    }
+
+    /**
+     * native 调用失败的统一日志（带节流）。
+     *
+     * 指针/按键是高频路径，一个坏掉的实例可能每帧都失败；这里按"类别"限制成最多每
+     * [NATIVE_FAILURE_LOG_INTERVAL_MS] 一条，既留痕又不刷屏。
+     */
+    private fun logNativeFailure(what: String, t: Throwable) {
+        val now = SystemClock.elapsedRealtime()
+        val last = nativeFailureLogAt[what] ?: 0L
+        if (now - last < NATIVE_FAILURE_LOG_INTERVAL_MS) return
+        nativeFailureLogAt[what] = now
+        Log.w(TAG, "native call failed: $what", t)
     }
 
     /**
@@ -510,6 +614,9 @@ class RdpSession(
             current
         }
         _bitmap.value = null
+        // 旧实例作废：已下发的布局记录跟着失效，新会话要按当时的窗口尺寸重新协商。
+        requestedWidth = 0
+        requestedHeight = 0
         if (inst == 0L) return
         // 裁剪版 FreeRDP 只有这一处全局剪贴板回调，摘掉后旧实例不会再触发粘贴。
         LibFreeRDP.setClipboardSentListener(null)
@@ -565,6 +672,7 @@ class RdpSession(
             val bmp = bitmapRef
             if (instance != id || bitmapInstance != id || bmp == null) return
             runCatching { LibFreeRDP.updateGraphics(id, bmp, x, y, width, height) }
+                .onFailure { logNativeFailure("updateGraphics(instance)", it) }
             bumpFrame()
         }
 
@@ -651,5 +759,12 @@ class RdpSession(
 
         /** cliprdr 握手回调的最长等待时间；超时后仍发粘贴快捷键，避免中文输入卡死。 */
         private const val CLIPBOARD_SENT_TIMEOUT_MS = 3000L
+
+        /** MS-RDPEDISP 对单个显示器宽高的限制（DISPLAY_CONTROL_MIN/MAX_MONITOR_WIDTH/HEIGHT）。 */
+        private const val MIN_DISPLAY_SIZE = 200
+        private const val MAX_DISPLAY_SIZE = 8192
+
+        /** 同一类 native 调用失败的最短日志间隔，避免高频路径刷屏。 */
+        private const val NATIVE_FAILURE_LOG_INTERVAL_MS = 5000L
     }
 }

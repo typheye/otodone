@@ -55,6 +55,11 @@ object RdpKeys {
     const val VK_LCONTROL = 0xA2
     const val VK_LSHIFT = 0xA0
     const val VK_MENU = 0x12
+    /**
+     * 左 Alt。通用 [VK_MENU] 与 [VK_CONTROL] / [VK_SHIFT] 一样在 WinPR 的扫描码表里查不到，
+     * 发出去会被静默丢弃，组合键必须用这个左右具体码（见 RdpSession.sendPasteShortcut）。
+     */
+    const val VK_LMENU = 0xA4
     const val VK_ESCAPE = 0x1B
     const val VK_SPACE = 0x20
     const val VK_PRIOR = 0x21 // PageUp
@@ -67,10 +72,53 @@ object RdpKeys {
     const val VK_DOWN = 0x28
     const val VK_INSERT = 0x2D
     const val VK_DELETE = 0x2E
+    const val VK_C = 0x43
     const val VK_V = 0x56
+
+    // OEM 符号键（数值与 asciiToVirtualKey 里的字面量一致，这里补成具名常量给全键盘用）。
+    const val VK_OEM_1 = 0xBA      // ; :
+    const val VK_OEM_PLUS = 0xBB   // = +
+    const val VK_OEM_COMMA = 0xBC  // , <
+    const val VK_OEM_MINUS = 0xBD  // - _
+    const val VK_OEM_PERIOD = 0xBE // . >
+    const val VK_OEM_2 = 0xBF      // / ?
+    const val VK_OEM_3 = 0xC0      // 反引号 ~
+    const val VK_OEM_4 = 0xDB      // [ {
+    const val VK_OEM_5 = 0xDC      // 反斜杠 |
+    const val VK_OEM_6 = 0xDD      // ] }
+    const val VK_OEM_7 = 0xDE      // ' "
     const val VK_LWIN = 0x5B
     const val VK_APPS = 0x5D
-    private const val VK_F1 = 0x70
+
+    /** 功能键起点：F1 = 0x70，F12 = 0x7B（连续 12 个，见 ShortcutBar.FUNCTION_KEYS）。 */
+    const val VK_F1 = 0x70
+
+    /**
+     * WinPR 的 KBDEXT 标志位（= winpr/input.h 的 `#define KBDEXT 0x0100u`）。
+     *
+     * 方向键 / Home / End / PgUp / PgDn / Insert / Delete / Win 这些**扩展键**在 WinPR 的
+     * 扫描码表里位于 KBD4X（E0 前缀那张表）。查表函数
+     * `GetVirtualScanCodesFromVirtualKeyCode`（winpr/libwinpr/input/scancode.c:591）用
+     * `vkcode & KBDEXT` 决定查哪张表：不带这一位就只查 KBD4T，而扩展键**不在** KBD4T 里，
+     * 于是查表返回 0，JNI 发出 scancode=0 的按键 —— 远端表现就是"按了完全没反应"。
+     *
+     * JNI 侧（android_freerdp.c:1043）用 `keycode & 0xFF` 取键码、用
+     * `scancode & KBDEXT` 决定 KBD_FLAGS_EXTENDED，所以只需在 Kotlin 这一层把标志位带上去，
+     * **不用改 native**。
+     */
+    const val KBDEXT = 0x0100
+
+    /** 必须带 [KBDEXT] 才能查到扫描码的扩展键（KBD4X 表里的那些）。 */
+    private val EXTENDED_VIRTUAL_KEYS = setOf(
+        VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN,
+        VK_HOME, VK_END, VK_PRIOR, VK_NEXT,
+        VK_INSERT, VK_DELETE,
+        VK_LWIN, VK_APPS,
+    )
+
+    /** 扩展键补上 [KBDEXT]，普通键原样返回。发送按键前必须过一遍。 */
+    fun withExtendedFlag(virtualKey: Int): Int =
+        if (virtualKey in EXTENDED_VIRTUAL_KEYS) virtualKey or KBDEXT else virtualKey
 
     /** 返回 null 表示该按键应作为 unicode 字符发送。 */
     fun androidToVirtualKey(keyCode: Int): Int? = when (keyCode) {

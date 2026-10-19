@@ -21,8 +21,8 @@ android {
         applicationId = "com.otodone.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2610150
-        versionName = "1.26.10.Alpha2"
+        versionCode = 2610190
+        versionName = "1.26.10.Alpha3"
         vectorDrawables { useSupportLibrary = true }
         // 多点触控按键状态机回归测试：向真实 View 派发多指 MotionEvent。
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

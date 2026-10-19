@@ -1,11 +1,15 @@
 package com.otodone.app.data
 
 import android.content.Context
+import android.util.Log
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 
 /** 主题模式：跟随系统 / 浅色 / 深色。 */
@@ -47,6 +51,10 @@ data class ThemeSettings(
     val keepScreenOn: Boolean = true,
     /** 长按会话页键盘浮标，是否把手机剪贴板粘贴到远端（默认开启）。 */
     val quickPaste: Boolean = true,
+    /** 会话页左下角「鼠标右键」浮标是否显示（默认显示）。 */
+    val showMouseButton: Boolean = true,
+    /** 会话页右下角「键盘」浮标是否显示（默认显示）。 */
+    val showKeyboardButton: Boolean = true,
 ) {
     val themeMode: ThemeMode
         get() = when {
@@ -73,8 +81,19 @@ class ThemeSettingsRepository(private val context: Context) {
     private val keepScreenOnKey = booleanPreferencesKey("session_keep_screen_on")
     // 快捷粘贴：独立新 key，默认开启；不动上面已有的任何 key。
     private val quickPasteKey = booleanPreferencesKey("session_quick_paste")
+    // 会话页「三」菜单 -> 布局：两个浮标的显示开关。同样是独立新 key，默认开启。
+    private val showMouseButtonKey = booleanPreferencesKey("session_show_mouse_button")
+    private val showKeyboardButtonKey = booleanPreferencesKey("session_show_keyboard_button")
 
-    val settings: Flow<ThemeSettings> = context.settingsDataStore.data.map { preferences ->
+    // 读失败（文件损坏/磁盘问题）不能让 UI 崩：记一条日志后回落到"全部默认值"。
+    // DataStore 的 data 流在 IO 异常时会抛，这里必须 catch，否则 SettingsViewModel 的收集会挂掉。
+    @Suppress("TooGenericExceptionCaught")
+    val settings: Flow<ThemeSettings> = context.settingsDataStore.data
+        .catch { t ->
+            Log.w(TAG, "read settings failed, fallback to defaults", t)
+            emit(emptyPreferences())
+        }
+        .map { preferences ->
         ThemeSettings(
             followSystem = preferences[followSystemKey] ?: true,
             darkMode = preferences[darkModeKey] ?: false,
@@ -88,38 +107,44 @@ class ThemeSettingsRepository(private val context: Context) {
                 ?: SessionOrientation.AUTO,
             keepScreenOn = preferences[keepScreenOnKey] ?: true,
             quickPaste = preferences[quickPasteKey] ?: true,
+            showMouseButton = preferences[showMouseButtonKey] ?: true,
+            showKeyboardButton = preferences[showKeyboardButtonKey] ?: true,
         )
     }
 
-    suspend fun setFollowSystem(enabled: Boolean) {
-        context.settingsDataStore.edit { it[followSystemKey] = enabled }
+    /**
+     * 统一写入口：DataStore 写失败（磁盘满、权限、文件损坏）只记日志。
+     *
+     * 这些 setter 都从 `viewModelScope.launch` 里调用，异常不接住会变成未捕获协程异常。
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private suspend fun update(block: (MutablePreferences) -> Unit) {
+        runCatching { context.settingsDataStore.edit { block(it) } }
+            .onFailure { Log.w(TAG, "write settings failed", it) }
     }
 
-    suspend fun setDarkMode(enabled: Boolean) {
-        context.settingsDataStore.edit { it[darkModeKey] = enabled }
-    }
+    suspend fun setFollowSystem(enabled: Boolean) = update { it[followSystemKey] = enabled }
 
-    suspend fun setDynamicColor(enabled: Boolean) {
-        context.settingsDataStore.edit { it[dynamicColorKey] = enabled }
-    }
+    suspend fun setDarkMode(enabled: Boolean) = update { it[darkModeKey] = enabled }
 
-    suspend fun setOledBlack(enabled: Boolean) {
-        context.settingsDataStore.edit { it[oledBlackKey] = enabled }
-    }
+    suspend fun setDynamicColor(enabled: Boolean) = update { it[dynamicColorKey] = enabled }
 
-    suspend fun setPasteShortcut(shortcut: PasteShortcut) {
-        context.settingsDataStore.edit { it[pasteShortcutKey] = shortcut.name }
-    }
+    suspend fun setOledBlack(enabled: Boolean) = update { it[oledBlackKey] = enabled }
 
-    suspend fun setSessionOrientation(orientation: SessionOrientation) {
-        context.settingsDataStore.edit { it[sessionOrientationKey] = orientation.name }
-    }
+    suspend fun setPasteShortcut(shortcut: PasteShortcut) = update { it[pasteShortcutKey] = shortcut.name }
 
-    suspend fun setKeepScreenOn(enabled: Boolean) {
-        context.settingsDataStore.edit { it[keepScreenOnKey] = enabled }
-    }
+    suspend fun setSessionOrientation(orientation: SessionOrientation) =
+        update { it[sessionOrientationKey] = orientation.name }
 
-    suspend fun setQuickPaste(enabled: Boolean) {
-        context.settingsDataStore.edit { it[quickPasteKey] = enabled }
+    suspend fun setKeepScreenOn(enabled: Boolean) = update { it[keepScreenOnKey] = enabled }
+
+    suspend fun setQuickPaste(enabled: Boolean) = update { it[quickPasteKey] = enabled }
+
+    suspend fun setShowMouseButton(enabled: Boolean) = update { it[showMouseButtonKey] = enabled }
+
+    suspend fun setShowKeyboardButton(enabled: Boolean) = update { it[showKeyboardButtonKey] = enabled }
+
+    private companion object {
+        private const val TAG = "ThemeSettings"
     }
 }

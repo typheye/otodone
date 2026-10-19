@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "otoDone"
+rootProject.name = "otoDone-android"
 include(":app")

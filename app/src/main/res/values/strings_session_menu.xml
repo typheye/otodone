@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  会话页右上角「三」菜单 + 键盘上方快捷键浮层的文案。
+
+  与 strings_quick_paste.xml 同样的做法：新功能的文案单独成一个资源文件，
+  避免和 strings.xml 的其它改动挤在一起产生合并冲突。
+-->
+<resources>
+    <!-- 「三」菜单 -->
+    <string name="session_menu">会话菜单</string>
+    <string name="session_menu_title">会话</string>
+
+    <!-- 分组：显示 -->
+    <string name="session_section_display">显示</string>
+    <string name="session_display_item">显示器 %1$d</string>
+    <string name="session_display_current">%1$d × %2$d · 当前会话</string>
+    <string name="session_display_pending">等待会话连接</string>
+    <!-- 如实说明：RDP 没有通用的"枚举服务端显示器"机制，所以这里只有当前分辨率一条。 -->
+    <string name="session_display_note">RDP 协议只支持客户端下发布局，无法枚举远端显示器；这里显示的是当前会话使用的分辨率。</string>
+
+    <!-- 分组：布局 -->
+    <string name="session_section_layout">布局</string>
+    <string name="session_layout_mouse">鼠标</string>
+    <string name="session_layout_mouse_desc">显示左下角的右键浮标</string>
+    <string name="session_layout_keyboard">键盘</string>
+    <string name="session_layout_keyboard_desc">显示右下角的键盘浮标</string>
+
+    <!-- 键盘上方快捷键浮层 -->
+    <string name="session_shortcut_bar">虚拟全键盘</string>
+    <string name="session_shortcut_expand">展开全部按键</string>
+    <string name="session_shortcut_collapse">收起按键</string>
+</resources>

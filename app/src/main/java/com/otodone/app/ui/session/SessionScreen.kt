@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.util.Log
 import android.view.WindowManager
@@ -34,6 +35,8 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -42,6 +45,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -70,6 +74,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
@@ -89,6 +94,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -111,6 +117,10 @@ fun SessionRoute(
     sessionOrientation: SessionOrientation,
     keepScreenOn: Boolean,
     quickPaste: Boolean,
+    showMouseButton: Boolean,
+    showKeyboardButton: Boolean,
+    onShowMouseButtonChange: (Boolean) -> Unit,
+    onShowKeyboardButtonChange: (Boolean) -> Unit,
     onBack: () -> Unit,
     hostListViewModel: HostListViewModel = viewModel(factory = HostListViewModel.Factory),
     sessionViewModel: RdpSessionViewModel = viewModel(factory = RdpSessionViewModel.Factory),
@@ -125,6 +135,10 @@ fun SessionRoute(
             sessionOrientation = sessionOrientation,
             keepScreenOn = keepScreenOn,
             quickPaste = quickPaste,
+            showMouseButton = showMouseButton,
+            showKeyboardButton = showKeyboardButton,
+            onShowMouseButtonChange = onShowMouseButtonChange,
+            onShowKeyboardButtonChange = onShowKeyboardButtonChange,
             viewModel = sessionViewModel,
             onBack = onBack,
         )
@@ -152,6 +166,11 @@ fun SessionScreen(
     sessionOrientation: SessionOrientation,
     keepScreenOn: Boolean,
     quickPaste: Boolean,
+    // 「三」菜单 -> 布局：两个浮标是否渲染。值存在 DataStore，改完立即生效。
+    showMouseButton: Boolean,
+    showKeyboardButton: Boolean,
+    onShowMouseButtonChange: (Boolean) -> Unit,
+    onShowKeyboardButtonChange: (Boolean) -> Unit,
     viewModel: RdpSessionViewModel,
     onBack: () -> Unit,
 ) {
@@ -168,6 +187,28 @@ fun SessionScreen(
     var rightClickArmed by remember { mutableStateOf(false) }
     // AndroidView（远端画面）在 Compose 根坐标里的原点，用于浮标坐标换算。
     var surfaceOrigin by remember { mutableStateOf(Offset.Zero) }
+
+    // 「三」菜单：是否展开 + 当前是横屏还是竖屏（横屏走右侧栏、竖屏走底部抽屉）。
+    var menuOpen by remember { mutableStateOf(false) }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // 「显示」分组只列当前会话使用的分辨率：标准 RDP 没有「枚举远端显示器」的机制
+    // （disp 通道只允许客户端下发 monitor layout，详见验证报告）。
+    // 已连接就用远端分辨率，否则退回当前画面尺寸，两者都没有时菜单显示「等待会话连接」。
+    val display = (state as? RdpState.Connected)?.let { SessionDisplay(1, it.width, it.height) }
+        ?: bitmap?.let { SessionDisplay(1, it.width, it.height) }
+
+    // 键盘类 UI（系统 IME 可见 / 虚拟全键盘展开）占屏时，三个圆形浮标和「三」按钮临时隐藏，
+    // 否则会和键盘/面板叠在一起（真机反馈的 UI 叠加 bug）。由快捷键浮层回调驱动。
+    var keyboardUiActive by remember { mutableStateOf(false) }
+
+    // 关掉「鼠标」浮标、或浮标被键盘挡住时，都不能留下「右键待发」：
+    // 否则用户在画面上点一下会莫名发出右键。
+    LaunchedEffect(showMouseButton, keyboardUiActive) {
+        if (!showMouseButton || keyboardUiActive) {
+            rightClickArmed = false
+            surfaceView?.rightClickArmed = false
+        }
+    }
 
     // 全屏沉浸 + 按设置决定屏幕方向/保持亮屏 + 内容延伸到异形屏（刘海/挖孔）区域
     SessionWindowEffect(sessionOrientation, keepScreenOn)
@@ -188,51 +229,81 @@ fun SessionScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // 分层约定（真机上出过"画面被挤成窄带"的事故，别再破坏它）：
+    // 1. 这一层 Box 铺满窗口；2. BoxWithConstraints 只负责量出**窗口尺寸**并承载远端画面；
+    // 3. 浮标 / 「三」按钮 / 快捷键浮层 / 菜单全是它的**兄弟节点**，只做覆盖层。
+    // Box 的子节点永远拿到父级给定的固定约束，彼此不会改变对方的尺寸，
+    // 所以浮层显示与否都不可能影响 AndroidView 的大小，也就不会影响 connect() 传的宽高。
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            // 这个尺寸只来自窗口本身（覆盖层是兄弟节点，改不了它）。
             val widthPx = with(density) { maxWidth.roundToPx() }
             val heightPx = with(density) { maxHeight.roundToPx() }
-            LaunchedEffect(host.id, widthPx, heightPx) {
-                if (widthPx > 0 && heightPx > 0) {
-                    viewModel.connect(host, widthPx, heightPx)
-                }
-            }
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .onGloballyPositioned { surfaceOrigin = it.positionInRoot() },
-                factory = { ctx ->
-                    RdpSurfaceView(ctx).also { view ->
-                        view.listener = viewModel.inputListener
-                        // 粘性右键：画面发完一次右键就自动解除，避免下一次点击误触。
-                        view.onRightClickSent = {
-                            rightClickArmed = false
-                            view.rightClickArmed = false
-                        }
-                        surfaceView = view
-                    }
-                },
-                update = { view ->
-                    view.listener = viewModel.inputListener
-                    view.rightClickArmed = rightClickArmed
-                    view.setFrame(bitmap, frameTick)
-                },
-            )
-        }
+            val hasViewport = widthPx > 0 && heightPx > 0
 
-        StatusOverlay(
-            state = state,
-            onRetry = {
-                // 重试时沿用当前屏幕尺寸
-                val metrics = context.resources.displayMetrics
-                viewModel.retry(host, metrics.widthPixels.coerceAtLeast(320), metrics.heightPixels.coerceAtLeast(240))
-            },
-        )
+            // 只在 host 变化时连接一次：窗口尺寸**不进 key**。键盘弹出/收起、旋转都不会再触发
+            // 「按新尺寸重连」——那正是之前把画面搞成一条窄带的元凶之一。
+            LaunchedEffect(host.id, hasViewport) {
+                if (hasViewport) viewModel.connect(host, widthPx, heightPx)
+            }
+            // 窗口尺寸真的变了（旋转 / 分屏）才通知远端，由 RdpSession 用 MS-RDPEDISP 下发新布局；
+            // 键盘弹出不会改变窗口尺寸（adjustNothing），所以这里不会因键盘而抖动。
+            LaunchedEffect(host.id, widthPx, heightPx) {
+                if (hasViewport) viewModel.onViewportChanged(widthPx, heightPx)
+            }
+
+            // 键盘是覆盖式窗口（windowSoftInputMode=adjustNothing），窗口本身不会被顶起来。
+            // 不主动让位的话画面就被 IME 整个盖住（横屏尤其致命）。这里在**布局阶段**吃掉
+            // IME 高度：画面区缩到键盘上方，AndroidView 自动重排、RdpSurfaceView 自己
+            // letterbox 缩放，不重连、也不改 connect 的尺寸。
+            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime)) {
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onGloballyPositioned { surfaceOrigin = it.positionInRoot() },
+                    factory = { ctx ->
+                        RdpSurfaceView(ctx).also { view ->
+                            view.listener = viewModel.inputListener
+                            // 粘性右键：画面发完一次右键就自动解除，避免下一次点击误触。
+                            view.onRightClickSent = {
+                                rightClickArmed = false
+                                view.rightClickArmed = false
+                            }
+                            surfaceView = view
+                        }
+                    },
+                    update = { view ->
+                        view.listener = viewModel.inputListener
+                        view.rightClickArmed = rightClickArmed
+                        view.setFrame(bitmap, frameTick)
+                    },
+                )
+
+            }
+        }
 
         // 不设应用栏：远端画面整屏铺满。退出走系统返回手势/按键，
         // 键盘保留一个仅 44dp 的半透明悬浮按钮，不占任何布局空间。
+        //
+        // 返回键优先级（从最上层往下）：
+        //   1. 侧栏/底部抽屉菜单  —— SessionMenu 内部注册的 BackHandler 更晚添加，先拿到事件；
+        //   2. 展开的虚拟全键盘    —— ShortcutBar 的 BackHandler（收起并恢复 IME）；
+        //   3. 系统输入法可见      —— 下面这一层负责收起 IME；
+        //   4. 两段式退出会话。
+        // 每层都是独立的 BackHandler，enabled 互斥，一次返回只会关一层。
+        val rootView = LocalView.current
         var lastBackAt by remember { mutableLongStateOf(0L) }
         BackHandler {
+            // 走到这里说明菜单和全键盘都没开。系统 IME 可见时先把键盘收起来，
+            // 不要直接跳到"再按一次退出"。
+            val imeShowing = runCatching {
+                ViewCompat.getRootWindowInsets(rootView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime())
+            }.getOrNull() == true
+            if (imeShowing) {
+                surfaceView?.hideKeyboard()
+                return@BackHandler
+            }
             val now = System.currentTimeMillis()
             if (now - lastBackAt < 2000L) {
                 onBack()
@@ -246,54 +317,118 @@ fun SessionScreen(
             }
         }
 
-        SessionFloatButton(
-            icon = rememberVectorPainter(Icons.Filled.Keyboard),
-            contentDescription = stringResource(R.string.session_keyboard),
-            onClick = { surfaceView?.showKeyboard() },
-            // 长按 = 快捷粘贴；单击仍然只弹输入法，两条路径在浮标手势里互斥。
-            onLongClick = {
-                if (!quickPaste) {
-                    // 开关关闭：长按不粘贴、也不弹提示。理由见验证报告：
-                    // 保留「长按」这个手势槽位，避免关掉后长按反而弹键盘的行为分裂；
-                    // 也不给禁用态再加一条会跟着连点刷屏的 Toast。
-                    Log.i(TAG, "quick paste long-press ignored: disabled in settings")
-                } else {
-                    when (viewModel.quickPasteFromClipboard()) {
-                        QuickPasteResult.PASTED ->
-                            showToast(context, R.string.session_quick_paste_done)
-                        QuickPasteResult.EMPTY_CLIPBOARD ->
-                            showToast(context, R.string.session_quick_paste_empty)
-                        QuickPasteResult.NO_SESSION ->
-                            showToast(context, R.string.session_quick_paste_unavailable)
-                        // 防抖窗口内不弹提示：Toast 也不能刷屏。
-                        QuickPasteResult.DEBOUNCED -> Unit
+        // 右下角键盘浮标：只在「三」菜单 -> 布局 -> 键盘 打开时渲染；
+        // 键盘类 UI 占屏（IME 可见 / 全键盘展开）时隐藏，避免和键盘/面板叠加。
+        if (showKeyboardButton && !keyboardUiActive) {
+            SessionFloatButton(
+                icon = rememberVectorPainter(Icons.Filled.Keyboard),
+                contentDescription = stringResource(R.string.session_keyboard),
+                onClick = { surfaceView?.showKeyboard() },
+                // 长按 = 快捷粘贴；单击仍然只弹输入法，两条路径在浮标手势里互斥。
+                onLongClick = {
+                    if (!quickPaste) {
+                        // 开关关闭：长按不粘贴、也不弹提示。理由见验证报告：
+                        // 保留「长按」这个手势槽位，避免关掉后长按反而弹键盘的行为分裂；
+                        // 也不给禁用态再加一条会跟着连点刷屏的 Toast。
+                        Log.i(TAG, "quick paste long-press ignored: disabled in settings")
+                    } else {
+                        when (viewModel.quickPasteFromClipboard()) {
+                            QuickPasteResult.PASTED ->
+                                showToast(context, R.string.session_quick_paste_done)
+                            QuickPasteResult.EMPTY_CLIPBOARD ->
+                                showToast(context, R.string.session_quick_paste_empty)
+                            QuickPasteResult.NO_SESSION ->
+                                showToast(context, R.string.session_quick_paste_unavailable)
+                            // 防抖窗口内不弹提示：Toast 也不能刷屏。
+                            QuickPasteResult.DEBOUNCED -> Unit
+                        }
                     }
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .windowInsetsPadding(WindowInsets.displayCutout)
-                .padding(end = 14.dp, bottom = 14.dp),
-        )
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .padding(end = 14.dp, bottom = 14.dp),
+            )
+        }
 
         // 键盘浮标在右下角，右键浮标放左下角（与它左右对称，同一水平线）。
         // 粘性右键：点一下浮标进入右键模式（高亮），再点画面 = 右键，发完自动退出。
         // 刻意做成单指顺序操作——不依赖"一根手指按住浮标 + 另一根手指点画面"，
         // 因为后者要走 Compose AndroidView 的多指路由，实测在真机上会被吞掉。
-        SessionFloatButton(
-            icon = painterResource(R.drawable.ic_mouse_right),
-            contentDescription = stringResource(R.string.session_right_click),
-            armed = rightClickArmed,
-            onClick = {
-                val next = !rightClickArmed
-                rightClickArmed = next
-                surfaceView?.rightClickArmed = next
+        // 只在「三」菜单 -> 布局 -> 鼠标 打开时渲染；键盘类 UI 占屏时同样隐藏。
+        if (showMouseButton && !keyboardUiActive) {
+            SessionFloatButton(
+                icon = painterResource(R.drawable.ic_mouse_right),
+                contentDescription = stringResource(R.string.session_right_click),
+                armed = rightClickArmed,
+                onClick = {
+                    val next = !rightClickArmed
+                    rightClickArmed = next
+                    surfaceView?.rightClickArmed = next
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    // 必须和键盘浮标一致：padding 写在 size 之前，两圆圈的上下间距才一致。
+                    .padding(start = 14.dp, bottom = 14.dp),
+            )
+        }
+
+        // 右上角「三」：竖屏开底部抽屉、横屏开右侧栏（见 SessionMenu）。
+        // 同样在键盘类 UI 占屏时隐藏（横屏全键盘面板很高，会和它叠在一起）。
+        if (!keyboardUiActive) {
+            SessionMenuButton(
+                onClick = { menuOpen = true },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .padding(end = 14.dp, top = 14.dp),
+            )
+        }
+
+        // 键盘弹出时贴在键盘正上方的快捷键浮层；收起态键盘一收起浮层就消失，
+        // 展开态则主动收起系统 IME、改用「收起前的 IME 高度」占位（见 KeyboardShortcutBarOverlay）。
+        // ime inset 只在这个浮层内部订阅，键盘的逐帧动画不会带着远端画面一起重组。
+        KeyboardShortcutBarOverlay(
+            sendVirtualKey = viewModel::sendVirtualKey,
+            onRequestHideIme = { surfaceView?.hideKeyboard() },
+            // 收起全键盘时把系统 IME 弹回来 —— 与右下角键盘浮标走同一条路。
+            onRequestShowIme = { surfaceView?.showKeyboard() },
+            // 浮层占用屏幕时把三个圆形按钮藏起来，退下（IME 收起且全键盘收起）再恢复。
+            onActiveChange = { active -> keyboardUiActive = active },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+
+        // 菜单本身常驻组合：横屏侧边栏的滑入/滑出都由它内部的 AnimatedVisibility 负责。
+        SessionMenu(
+            visible = menuOpen,
+            isLandscape = isLandscape,
+            display = display,
+            showMouseButton = showMouseButton,
+            showKeyboardButton = showKeyboardButton,
+            onShowMouseButtonChange = onShowMouseButtonChange,
+            onShowKeyboardButtonChange = onShowKeyboardButtonChange,
+            onDismiss = { menuOpen = false },
+        )
+
+        // 连接状态变化（成功/失败/断开）时把菜单关掉：它是唯一可能盖在覆盖层上面的东西。
+        LaunchedEffect(state) {
+            if (menuOpen && state !is RdpState.Connected) menuOpen = false
+        }
+
+        // 状态覆盖层必须是**最后一个**子节点：纯黑不透明、铺满全屏，
+        // 才能把浮标、「三」按钮、快捷键浮层、菜单一起盖住（连接中/失败时不留可点的控件）。
+        StatusOverlay(
+            state = state,
+            onRetry = {
+                // 重试时沿用当前屏幕尺寸（全屏铺满 → 直接取显示尺寸即可）
+                val metrics = context.resources.displayMetrics
+                viewModel.retry(
+                    host,
+                    metrics.widthPixels.coerceAtLeast(320),
+                    metrics.heightPixels.coerceAtLeast(240),
+                )
             },
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .windowInsetsPadding(WindowInsets.displayCutout)
-                // 必须和键盘浮标一致：padding 写在 size 之前，两圆圈的上下间距才一致。
-                .padding(start = 14.dp, bottom = 14.dp),
         )
     }
 }
@@ -317,7 +452,7 @@ fun SessionScreen(
  * 位置与安全区由调用方通过 [modifier] 传入（`align` + `windowInsetsPadding`）。
  */
 @Composable
-private fun SessionFloatButton(
+internal fun SessionFloatButton(
     icon: Painter,
     contentDescription: String,
     modifier: Modifier = Modifier,
@@ -337,6 +472,7 @@ private fun SessionFloatButton(
         modifier = modifier
             .size(44.dp)
             .clip(CircleShape)
+            // 只用干净的半透明实心圆底，不要任何描边/轮廓（用户反馈描边显脏）。
             // 按下时提亮，两个浮标都走同一套视觉反馈。
             .background(
                 if (pressed || armed) {
@@ -379,6 +515,7 @@ private fun SessionFloatButton(
 private const val IDLE_BG_ALPHA = 0.32f
 private const val PRESSED_BG_ALPHA = 0.42f
 
+
 /** 会话页调试日志 tag（快捷粘贴的长按/禁用分支走它，便于真机排查）。 */
 private const val TAG = "SessionScreen"
 
@@ -398,7 +535,9 @@ private suspend fun AwaitPointerEventScope.awaitUpPosition(id: PointerId): Offse
 
 /** 会话页轻提示：统一走 Toast.LENGTH_SHORT，文案资源由调用方给出。 */
 private fun showToast(context: Context, stringRes: Int) {
-    Toast.makeText(context, context.getString(stringRes), Toast.LENGTH_SHORT).show()
+    // Toast 在窗口已销毁/后台限制下可能抛（BadTokenException 等）；提示失败不值得让 App 崩。
+    runCatching { Toast.makeText(context, context.getString(stringRes), Toast.LENGTH_SHORT).show() }
+        .onFailure { Log.w(TAG, "showToast failed", it) }
 }
 
 /**
@@ -418,46 +557,65 @@ private fun SessionWindowEffect(orientation: SessionOrientation, keepScreenOn: B
 
     DisposableEffect(Unit) {
         val window = activity?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-        controller?.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
-
+        // 窗口/控制器在极端时机（Activity 正在销毁、多窗口切换）可能抛异常：
+        // 沉浸失效顶多让系统栏露出来，不该把会话页一起带崩。
         var previousCutout: Int? = null
-        if (window != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            previousCutout = window.attributes.layoutInDisplayCutoutMode
-            window.attributes = window.attributes.apply {
-                layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        runCatching {
+            val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+
+            if (window != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                previousCutout = window.attributes.layoutInDisplayCutoutMode
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
             }
-        }
+        }.onFailure { Log.w(TAG, "enter immersive/cutout failed", it) }
 
         onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
-            activity?.requestedOrientation =
-                restoreOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            // 退出会话必须清掉常亮，避免主页/其他页面也一直亮屏。
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            if (window != null && previousCutout != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                window.attributes = window.attributes.apply {
-                    layoutInDisplayCutoutMode = previousCutout
+            // 每一步都单独包住：任何一步失败都不能阻止其它还原（尤其是清常亮）。
+            runCatching {
+                window?.let { w ->
+                    WindowCompat.getInsetsController(w, view)
+                        ?.show(WindowInsetsCompat.Type.systemBars())
                 }
+            }.onFailure { Log.w(TAG, "restore system bars failed", it) }
+            runCatching {
+                activity?.requestedOrientation =
+                    restoreOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }.onFailure { Log.w(TAG, "restore orientation failed", it) }
+            // 退出会话必须清掉常亮，避免主页/其他页面也一直亮屏。
+            runCatching {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }.onFailure { Log.w(TAG, "clear keep-screen-on failed", it) }
+            if (window != null && previousCutout != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching {
+                    window.attributes = window.attributes.apply {
+                        layoutInDisplayCutoutMode = previousCutout
+                    }
+                }.onFailure { Log.w(TAG, "restore cutout mode failed", it) }
             }
         }
     }
 
     LaunchedEffect(orientation) {
-        activity?.requestedOrientation = orientation.toActivityOrientation()
+        runCatching { activity?.requestedOrientation = orientation.toActivityOrientation() }
+            .onFailure { Log.w(TAG, "apply orientation failed", it) }
     }
 
     // 保持亮屏：会话中改设置也能立刻生效（开→加 flag，关→清 flag）。
     LaunchedEffect(keepScreenOn) {
         val window = activity?.window ?: return@LaunchedEffect
-        if (keepScreenOn) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
+        runCatching {
+            if (keepScreenOn) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }.onFailure { Log.w(TAG, "toggle keep-screen-on failed", it) }
     }
 }
 
@@ -481,17 +639,15 @@ private val PolygonLoaderSize = 44.dp
 private val PI_F = PI.toFloat()
 
 /**
- * 会话状态浮层：**不透明**卡片 + 「变形多边形」加载动画 + 一行文案（失败时带重试按钮）。
+ * 会话状态覆盖层：**纯黑不透明、铺满全屏**，只留中央的「变形多边形 + 一行文案」
+ * （失败时多一个「重试」按钮）。
  *
- * 与旧版相比：
- * - 背景改成实色 [MaterialTheme.colorScheme.surfaceContainerHigh]（不再 copy(alpha)），
- *   盖在远端画面上不再透底；
- * - 只保留加载动画 + 一行文字，FreeRDP 版本、原生库错误、多行错误详情全部删除；
- * - 加载动画是 Material 3 Expressive 风格的自绘变形多边形（本项目的 Compose BOM
- *   2024.12.01 / material3 1.3.x 还没有官方组件，见 [PolygonLoadingIndicator]）。
+ * 它被放在根 Box 的**最后一个**子节点，所以会把远端画面、左右浮标、「三」按钮、
+ * 快捷键浮层一起盖住 —— 连接中/失败时用户不会点到任何看不见的控件。
+ * 纯黑是刻意的：浅色主题下不能用主题 surface，否则会变成一块白板、还会被误认成"页面"。
  *
- * 失败态沿用同一形状但停住动画（[PolygonLoadingIndicator] 的 running = false 分支），
- * 并保留「重试」按钮，否则三次自动重连停手后用户无路可走。
+ * 自动重连已经关掉（见 RdpSessionViewModel.AUTO_RECONNECT_ENABLED），失败后停在这里，
+ * 只有用户点「重试」才会重新连接。
  */
 @Composable
 private fun StatusOverlay(state: RdpState, onRetry: () -> Unit) {
@@ -501,7 +657,7 @@ private fun StatusOverlay(state: RdpState, onRetry: () -> Unit) {
         state is RdpState.Idle
     if (!showOverlay) return
 
-    // 只留一行：连接中给出目标地址；失败/断开用简短标题，不再堆技术细节。
+    // 一行标题：连接中给出目标地址；失败/断开用简短标题，不堆技术细节。
     val line = when (state) {
         is RdpState.Idle -> stringResource(R.string.session_preparing)
         is RdpState.Connecting -> stringResource(R.string.session_connecting, state.endpoint)
@@ -509,52 +665,83 @@ private fun StatusOverlay(state: RdpState, onRetry: () -> Unit) {
         is RdpState.Disconnected -> stringResource(R.string.session_disconnected_title)
         is RdpState.Connected -> ""
     }
+    // 失败/断开再补一句人话原因（不要原生错误码那种技术细节）。
+    val hint = when (state) {
+        is RdpState.Failed -> stringResource(R.string.session_failed_hint)
+        is RdpState.Disconnected -> stringResource(R.string.session_disconnected_hint)
+        else -> null
+    }
     val busy = state is RdpState.Connecting || state is RdpState.Idle
     val canRetry = state is RdpState.Failed || state is RdpState.Disconnected
 
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Surface(
-            // 必须是不透明实色：旧版 surface.copy(alpha = 0.92f) 会透出远端画面，看不清。
-            // 实色时 contentColorFor() 能正确解析，但这里仍显式给 contentColor 以免回退。
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = MaterialTheme.shapes.extraLarge,
-            tonalElevation = 6.dp,
-            shadowElevation = 10.dp,
+    // 纯黑不透明铺满：盖住画面 + 所有浮层控件。
+    // pointerInput 消费掉全部触摸事件：只画不挡的话，点在黑屏上仍会穿透到下面看不见的浮标/按钮。
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                PolygonLoadingIndicator(
-                    running = busy,
-                    color = if (busy) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-                Spacer(Modifier.height(14.dp))
+            PolygonLoadingIndicator(
+                running = busy,
+                // 黑底上固定用白色系，**不跟随 colorScheme**（浅色主题的 onSurface 近黑，黑底看不见）。
+                color = if (busy) Color.White else Color.White.copy(alpha = 0.55f),
+            )
+            Spacer(Modifier.height(18.dp))
+            Text(
+                text = line,
+                style = MaterialTheme.typography.titleMedium,
+                // 固定白色：覆盖层永远是纯黑底，深浅主题下都必须可读。
+                color = Color.White,
+                textAlign = TextAlign.Center,
+                // 窄屏/长地址（"正在连接 xxx:3389…"）最多两行，超出省略而不是把按钮挤出去。
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!hint.isNullOrEmpty()) {
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    text = line,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (canRetry) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
+                    text = hint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.72f),
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (canRetry) {
-                    Spacer(Modifier.height(14.dp))
-                    Button(onClick = onRetry) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null)
-                        Spacer(Modifier.size(6.dp))
-                        Text(stringResource(R.string.session_retry))
-                    }
+            }
+            if (canRetry) {
+                Spacer(Modifier.height(20.dp))
+                // 白底黑字实心按钮：与主题无关，在黑底上永远最高对比；48dp 最小高度保证好点。
+                Button(
+                    onClick = onRetry,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = Color.Black,
+                    ),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = stringResource(R.string.session_retry),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
         }

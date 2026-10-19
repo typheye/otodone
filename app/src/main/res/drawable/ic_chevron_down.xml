@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 快捷键浮层「收起」图标：朝下的 chevron（收起 = 把多余按键收回去）。
+     写法与 ic_menu_lines.xml 一致：24dp 视口、字面量白色、圆头描边；
+     Compose 的 Icon 会按 tint 重新着色。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M6,9.5 L12,15.5 L18,9.5" />
+</vector>

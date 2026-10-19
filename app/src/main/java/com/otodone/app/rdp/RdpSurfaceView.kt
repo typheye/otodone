@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.text.InputType
 import android.util.AttributeSet
+import android.util.Log
 import android.view.KeyEvent
 import android.view.ScaleGestureDetector
 import android.view.MotionEvent
@@ -20,6 +21,9 @@ import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import kotlin.math.abs
 import kotlin.math.hypot
+
+/** 软键盘/输入法相关失败的日志 tag（只在本文件用）。 */
+private const val TAG = "RdpSurface"
 
 /**
  * 显示远端桌面位图并采集输入的 View。
@@ -437,9 +441,27 @@ class RdpSurfaceView @JvmOverloads constructor(
     fun showKeyboard() {
         requestFocus()
         post {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+            // 输入法服务在个别 ROM/多窗口下可能返回 null 或直接抛（例如窗口已销毁）。
+            runCatching {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+            }.onFailure { Log.w(TAG, "showSoftInput failed", it) }
         }
+    }
+
+    /**
+     * 收起软键盘（不从焦点上摘掉自己）。
+     *
+     * 会话页的快捷键浮层展开成全键盘后，它自己就能打字，系统 IME 只会白占屏幕，
+     * 所以展开时主动收起来；浮层用「收起前的 IME 高度」继续占位，不会掉到屏幕底部。
+     */
+    fun hideKeyboard() {
+        // 视图已 detach 时 windowToken 可能是 null，hideSoftInputFromWindow 会抛 IllegalArgumentException。
+        val token = windowToken ?: return
+        runCatching {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(token, 0)
+        }.onFailure { Log.w(TAG, "hideSoftInputFromWindow failed", it) }
     }
 
     override fun onCheckIsTextEditor(): Boolean = true
