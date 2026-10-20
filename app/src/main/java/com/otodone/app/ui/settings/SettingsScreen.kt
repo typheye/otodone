@@ -1,6 +1,7 @@
 package com.otodone.app.ui.settings
 
 import android.content.Context
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -45,6 +46,7 @@ import com.otodone.app.data.PasteShortcut
 import com.otodone.app.data.SessionOrientation
 import com.otodone.app.data.ThemeSettings
 import com.otodone.app.ui.insets.rememberSystemBarInsets
+import com.otodone.app.ui.insets.rememberThreeButtonNav
 import com.otodone.app.ui.components.ActionPreferenceRow
 import com.otodone.app.ui.components.PreferenceCard
 import com.otodone.app.ui.components.PreferenceDivider
@@ -83,191 +85,198 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val windowInsets = rememberSystemBarInsets()
+    val threeButtonNav = rememberThreeButtonNav()
     val cacheClearedMessage = stringResource(R.string.settings_cache_cleared)
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showPasteShortcutSheet by remember { mutableStateOf(false) }
     var showSessionOrientationSheet by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                windowInsets = windowInsets.only(
-                    WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+    // 弹层必须和页面在同一个 Box 里、排在 Scaffold 之后，才会盖在页面顶层（同一窗口）。
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    windowInsets = windowInsets.only(
+                        WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+                    ),
+                    title = { Text(stringResource(R.string.settings_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.action_back),
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            // 统一的 SystemBars inset：小窗取 max 兜底，底部不会多出一截、也不会被压住。
+            contentWindowInsets = windowInsets,
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 三键导航：视口裁到导航栏之上；手势导航保持 edge-to-edge（末项由 contentPadding 兜底）。
+                    .padding(
+                        bottom = if (threeButtonNav) padding.calculateBottomPadding() else 0.dp,
+                    ),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    top = padding.calculateTopPadding() + 12.dp,
+                    end = 16.dp,
+                    bottom = if (threeButtonNav) 28.dp else padding.calculateBottomPadding() + 28.dp,
                 ),
-                title = { Text(stringResource(R.string.settings_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back),
+            ) {
+                item { SectionLabel(stringResource(R.string.settings_section_general)) }
+                item {
+                    PreferenceCard {
+                        SwitchPreferenceRow(
+                            icon = Icons.Filled.Brightness6,
+                            title = stringResource(R.string.settings_follow_system),
+                            subtitle = stringResource(R.string.settings_follow_system_desc),
+                            checked = settings.followSystem,
+                            onCheckedChange = onFollowSystemChange,
                         )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        // 统一的 SystemBars inset：小窗取 max 兜底，底部不会多出一截、也不会被压住。
-        contentWindowInsets = windowInsets,
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            // 用 contentPadding 而不是 Modifier.padding：背景可以铺到系统栏底下，
-            // 同时首尾项也能完整滚进安全区（Modifier.padding 会把整个列表视口缩小）。
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                top = padding.calculateTopPadding() + 12.dp,
-                end = 16.dp,
-                bottom = padding.calculateBottomPadding() + 28.dp,
-            ),
-        ) {
-            item { SectionLabel(stringResource(R.string.settings_section_general)) }
-            item {
-                PreferenceCard {
-                    SwitchPreferenceRow(
-                        icon = Icons.Filled.Brightness6,
-                        title = stringResource(R.string.settings_follow_system),
-                        subtitle = stringResource(R.string.settings_follow_system_desc),
-                        checked = settings.followSystem,
-                        onCheckedChange = onFollowSystemChange,
-                    )
-                    if (!settings.followSystem) {
+                        if (!settings.followSystem) {
+                            PreferenceDivider()
+                            SwitchPreferenceRow(
+                                icon = Icons.Filled.DarkMode,
+                                title = stringResource(R.string.settings_dark_mode),
+                                subtitle = stringResource(R.string.settings_dark_mode_desc),
+                                checked = settings.darkMode,
+                                onCheckedChange = onDarkModeChange,
+                            )
+                        }
                         PreferenceDivider()
                         SwitchPreferenceRow(
-                            icon = Icons.Filled.DarkMode,
-                            title = stringResource(R.string.settings_dark_mode),
-                            subtitle = stringResource(R.string.settings_dark_mode_desc),
-                            checked = settings.darkMode,
-                            onCheckedChange = onDarkModeChange,
+                            icon = Icons.Filled.Palette,
+                            title = stringResource(R.string.settings_dynamic_color),
+                            subtitle = stringResource(R.string.settings_dynamic_color_desc),
+                            checked = settings.dynamicColor,
+                            onCheckedChange = onDynamicColorChange,
                         )
                     }
-                    PreferenceDivider()
-                    SwitchPreferenceRow(
-                        icon = Icons.Filled.Palette,
-                        title = stringResource(R.string.settings_dynamic_color),
-                        subtitle = stringResource(R.string.settings_dynamic_color_desc),
-                        checked = settings.dynamicColor,
-                        onCheckedChange = onDynamicColorChange,
-                    )
                 }
-            }
 
-            // 会话相关设置单独分组
-            item { SectionLabel(stringResource(R.string.settings_section_session), topSpace = true) }
-            item {
-                PreferenceCard {
-                    SwitchPreferenceRow(
-                        icon = Icons.Filled.Lightbulb,
-                        title = stringResource(R.string.settings_keep_screen_on),
-                        subtitle = stringResource(R.string.settings_keep_screen_on_desc),
-                        checked = settings.keepScreenOn,
-                        onCheckedChange = onKeepScreenOnChange,
-                    )
-                    PreferenceDivider()
-                    SwitchPreferenceRow(
-                        icon = Icons.Filled.ContentPasteGo,
-                        title = stringResource(R.string.settings_quick_paste),
-                        subtitle = stringResource(R.string.settings_quick_paste_desc),
-                        checked = settings.quickPaste,
-                        onCheckedChange = onQuickPasteChange,
-                    )
-                    PreferenceDivider()
-                    ValuePreferenceRow(
-                        icon = ScreenOrientationIcon,
-                        title = stringResource(R.string.settings_screen_orientation),
-                        subtitle = stringResource(R.string.settings_screen_orientation_desc),
-                        value = screenOrientationLabel(settings.sessionOrientation),
-                        onClick = { showSessionOrientationSheet = true },
-                    )
-                    PreferenceDivider()
-                    ValuePreferenceRow(
-                        icon = Icons.Filled.ContentPaste,
-                        title = stringResource(R.string.settings_paste_shortcut),
-                        subtitle = stringResource(R.string.settings_paste_shortcut_desc),
-                        value = pasteShortcutLabel(settings.pasteShortcut),
-                        onClick = { showPasteShortcutSheet = true },
-                    )
+                // 会话相关设置单独分组
+                item { SectionLabel(stringResource(R.string.settings_section_session), topSpace = true) }
+                item {
+                    PreferenceCard {
+                        SwitchPreferenceRow(
+                            icon = Icons.Filled.Lightbulb,
+                            title = stringResource(R.string.settings_keep_screen_on),
+                            subtitle = stringResource(R.string.settings_keep_screen_on_desc),
+                            checked = settings.keepScreenOn,
+                            onCheckedChange = onKeepScreenOnChange,
+                        )
+                        PreferenceDivider()
+                        SwitchPreferenceRow(
+                            icon = Icons.Filled.ContentPasteGo,
+                            title = stringResource(R.string.settings_quick_paste),
+                            subtitle = stringResource(R.string.settings_quick_paste_desc),
+                            checked = settings.quickPaste,
+                            onCheckedChange = onQuickPasteChange,
+                        )
+                        PreferenceDivider()
+                        ValuePreferenceRow(
+                            icon = ScreenOrientationIcon,
+                            title = stringResource(R.string.settings_screen_orientation),
+                            subtitle = stringResource(R.string.settings_screen_orientation_desc),
+                            value = screenOrientationLabel(settings.sessionOrientation),
+                            onClick = { showSessionOrientationSheet = true },
+                        )
+                        PreferenceDivider()
+                        ValuePreferenceRow(
+                            icon = Icons.Filled.ContentPaste,
+                            title = stringResource(R.string.settings_paste_shortcut),
+                            subtitle = stringResource(R.string.settings_paste_shortcut_desc),
+                            value = pasteShortcutLabel(settings.pasteShortcut),
+                            onClick = { showPasteShortcutSheet = true },
+                        )
+                    }
                 }
-            }
 
-            item { SectionLabel(stringResource(R.string.settings_section_app), topSpace = true) }
-            item {
-                PreferenceCard {
-                    ActionPreferenceRow(
-                        icon = Icons.Filled.Info,
-                        title = stringResource(R.string.about_title),
-                        subtitle = stringResource(R.string.about_summary),
-                        onClick = onOpenAbout,
-                    )
-                    PreferenceDivider()
-                    ActionPreferenceRow(
-                        icon = Icons.Filled.CleaningServices,
-                        title = stringResource(R.string.settings_clear_cache),
-                        subtitle = stringResource(R.string.settings_clear_cache_desc),
-                        onClick = { showClearCacheDialog = true },
-                    )
+                item { SectionLabel(stringResource(R.string.settings_section_app), topSpace = true) }
+                item {
+                    PreferenceCard {
+                        ActionPreferenceRow(
+                            icon = Icons.Filled.Info,
+                            title = stringResource(R.string.about_title),
+                            subtitle = stringResource(R.string.about_summary),
+                            onClick = onOpenAbout,
+                        )
+                        PreferenceDivider()
+                        ActionPreferenceRow(
+                            icon = Icons.Filled.CleaningServices,
+                            title = stringResource(R.string.settings_clear_cache),
+                            subtitle = stringResource(R.string.settings_clear_cache_desc),
+                            onClick = { showClearCacheDialog = true },
+                        )
+                    }
                 }
-            }
 
+            }
         }
-    }
 
-    if (showClearCacheDialog) {
-        ConfirmSheet(
-            title = stringResource(R.string.settings_clear_cache),
-            message = stringResource(R.string.settings_clear_cache_confirm),
-            confirmLabel = stringResource(R.string.action_clear),
-            dismissLabel = stringResource(R.string.action_cancel),
-            onConfirm = {
-                showClearCacheDialog = false
-                val appContext = context.applicationContext
-                scope.launch {
-                    withContext(Dispatchers.IO) { clearCache(appContext) }
-                    snackbarHostState.showSnackbar(cacheClearedMessage)
-                }
-            },
-            onDismiss = { showClearCacheDialog = false },
-        )
-    }
+        if (showClearCacheDialog) {
+            ConfirmSheet(
+                title = stringResource(R.string.settings_clear_cache),
+                message = stringResource(R.string.settings_clear_cache_confirm),
+                confirmLabel = stringResource(R.string.action_clear),
+                dismissLabel = stringResource(R.string.action_cancel),
+                onConfirm = {
+                    showClearCacheDialog = false
+                    val appContext = context.applicationContext
+                    scope.launch {
+                        withContext(Dispatchers.IO) { clearCache(appContext) }
+                        snackbarHostState.showSnackbar(cacheClearedMessage)
+                    }
+                },
+                onDismiss = { showClearCacheDialog = false },
+            )
+        }
 
-    if (showSessionOrientationSheet) {
-        SingleChoiceSheet(
-            title = stringResource(R.string.settings_screen_orientation),
-            items = SessionOrientation.entries.map { orientation ->
-                SingleChoiceItem(
-                    value = orientation,
-                    label = screenOrientationLabel(orientation),
-                    description = screenOrientationDescription(orientation),
-                )
-            },
-            selected = settings.sessionOrientation,
-            onSelect = { orientation ->
-                onSessionOrientationChange(orientation)
-                showSessionOrientationSheet = false
-            },
-            onDismiss = { showSessionOrientationSheet = false },
-        )
-    }
+        if (showSessionOrientationSheet) {
+            SingleChoiceSheet(
+                title = stringResource(R.string.settings_screen_orientation),
+                items = SessionOrientation.entries.map { orientation ->
+                    SingleChoiceItem(
+                        value = orientation,
+                        label = screenOrientationLabel(orientation),
+                        description = screenOrientationDescription(orientation),
+                    )
+                },
+                selected = settings.sessionOrientation,
+                onSelect = { orientation ->
+                    onSessionOrientationChange(orientation)
+                    showSessionOrientationSheet = false
+                },
+                onDismiss = { showSessionOrientationSheet = false },
+            )
+        }
 
-    if (showPasteShortcutSheet) {
-        SingleChoiceSheet(
-            title = stringResource(R.string.settings_paste_shortcut),
-            items = PasteShortcut.entries.map { shortcut ->
-                SingleChoiceItem(
-                    value = shortcut,
-                    label = pasteShortcutLabel(shortcut),
-                    description = pasteShortcutDescription(shortcut),
-                )
-            },
-            selected = settings.pasteShortcut,
-            onSelect = { shortcut ->
-                onPasteShortcutChange(shortcut)
-                showPasteShortcutSheet = false
-            },
-            onDismiss = { showPasteShortcutSheet = false },
-        )
+        if (showPasteShortcutSheet) {
+            SingleChoiceSheet(
+                title = stringResource(R.string.settings_paste_shortcut),
+                items = PasteShortcut.entries.map { shortcut ->
+                    SingleChoiceItem(
+                        value = shortcut,
+                        label = pasteShortcutLabel(shortcut),
+                        description = pasteShortcutDescription(shortcut),
+                    )
+                },
+                selected = settings.pasteShortcut,
+                onSelect = { shortcut ->
+                    onPasteShortcutChange(shortcut)
+                    showPasteShortcutSheet = false
+                },
+                onDismiss = { showPasteShortcutSheet = false },
+            )
+        }
     }
 }
 

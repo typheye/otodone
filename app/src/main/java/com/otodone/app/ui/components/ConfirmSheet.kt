@@ -4,27 +4,29 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.otodone.app.ui.insets.rememberSystemBarInsets
 
 /**
- * 统一的底部抽屉确认弹窗（与「添加电脑」同一个 ModalBottomSheet 观感）。
+ * 统一的底部抽屉确认弹窗（与「添加电脑」同一个 [InWindowBottomSheet] 观感）。
  * App 内不再使用 AlertDialog。
+ *
+ * [destructive] = true 时确认按钮改用主题的 error 配色（删除这类不可撤销的操作），
+ * 取消按钮仍保持低强调的描边样式，避免用户误点。
+ *
+ * 承载方式见 [InWindowBottomSheet]：窗口内自绘，小窗下不会飘到桌面上。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfirmSheet(
     title: String,
@@ -34,18 +36,17 @@ fun ConfirmSheet(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    destructive: Boolean = false,
 ) {
-    val windowInsets = rememberSystemBarInsets()
-    ModalBottomSheet(
+    InWindowBottomSheet(
         onDismissRequest = onDismiss,
         modifier = modifier,
-        // 底部安全区走统一的 SystemBars 口径：小窗里取 max，避免按钮被多补一截
-        contentWindowInsets = { windowInsets.only(WindowInsetsSides.Bottom) },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 24.dp),
         ) {
             Text(title, style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(10.dp))
@@ -62,7 +63,18 @@ fun ConfirmSheet(
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
                     Text(dismissLabel)
                 }
-                Button(onClick = onConfirm, modifier = Modifier.weight(1f)) {
+                Button(
+                    onClick = onConfirm,
+                    modifier = Modifier.weight(1f),
+                    colors = if (destructive) {
+                        ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        )
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    },
+                ) {
                     Text(confirmLabel)
                 }
             }

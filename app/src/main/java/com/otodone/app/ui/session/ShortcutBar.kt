@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.otodone.app.R
 import com.otodone.app.rdp.RdpKeys
+import com.otodone.app.ui.insets.rememberSystemBarInsets
 
 /**
  * 软键盘上方的快捷键浮层（对应 aFreeRDP 的键盘扩展条）。
@@ -98,6 +99,10 @@ internal fun KeyboardShortcutBarOverlay(
     val configuration = LocalConfiguration.current
     // 这个值在键盘动画期间会随动画帧变化，读它就等于订阅 ime inset。
     val imeBottomPx = WindowInsets.ime.getBottom(density)
+    // 底部系统栏安全区（三键导航会走 tappableElement 兜底、小窗取配额 max）。
+    // 与 IME 是「取大」而不是相加：IME inset 本身已经包含导航栏高度，
+    // 相加会让浮层在键盘上方多垫一截。
+    val safeBottomPx = rememberSystemBarInsets().getBottom(density)
 
     // 展开态放在这里而不是浮层内部：收起 IME 之后浮层仍要渲染，状态必须活得比它久。
     var expanded by remember { mutableStateOf(false) }
@@ -143,15 +148,17 @@ internal fun KeyboardShortcutBarOverlay(
     val anchorPx: Int
     when {
         // 键盘可见：贴在键盘正上方（收起态、以及展开态下用户又弹出了 IME）。
-        keyboardVisible -> anchorPx = imeBottomPx
+        // 与系统栏取 max：IME 已经含导航栏高度时保持 IME 值，不会叠加。
+        keyboardVisible -> anchorPx = maxOf(imeBottomPx, safeBottomPx)
         // 展开态且键盘已被我们收起（或本来就没有键盘）：底部锚定，占住原来键盘那块区域。
-        expanded -> anchorPx = 0
+        // 底部再避开系统导航栏（三键 48dp / 手势 24dp / 小窗 24dp 配额），面板最后一行不会被压住。
+        expanded -> anchorPx = safeBottomPx
         // 收起态且没有键盘：不渲染。
         else -> return
     }
 
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.roundToPx() }
-    val availablePx = if (keyboardVisible) screenHeightPx - imeBottomPx else screenHeightPx
+    val availablePx = screenHeightPx - (if (keyboardVisible) imeBottomPx else safeBottomPx)
     // 高度上限：可用高度的 50%（题目要求的 45%~55%），并且不超过键盘上方的空间。
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     // 横屏可用高度矮、展开后行数多，给更高的比例，避免一展开就要滚动。

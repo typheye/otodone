@@ -1,7 +1,5 @@
 package com.otodone.app.ui.session
 
-import android.view.View
-import android.view.Window
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -16,15 +14,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -33,28 +26,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Mouse
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import com.otodone.app.R
+import com.otodone.app.ui.components.InWindowBottomSheet
 import com.otodone.app.ui.components.PreferenceCard
 import com.otodone.app.ui.components.PreferenceDivider
 import com.otodone.app.ui.components.PreferenceRow
@@ -80,8 +65,8 @@ internal data class SessionDisplay(val index: Int, val width: Int, val height: I
  * 会话页的「三」菜单。
  *
  * 横竖屏用两套呈现，内容完全一样（同一份 [SessionMenuContent]）：
- * - 竖屏：底部抽屉 [ModalBottomSheet]，与设置页的 [com.otodone.app.ui.components.SingleChoiceSheet]
- *   同一观感（圆角、拖拽把手、点击遮罩/返回键关闭）；
+ * - 竖屏：底部抽屉，承载在 [InWindowBottomSheet] 上（窗口内自绘，不用 Dialog 窗口），
+ *   与设置页的 [com.otodone.app.ui.components.SingleChoiceSheet] 同一观感；
  * - 横屏：从右侧滑出的侧边栏。这里刻意不用 ModalNavigationDrawer——它的边缘滑动手势
  *   会和远端画面的单指拖动/双指缩放抢事件，改成一个自绘的遮罩 + 平移面板，手势零冲突。
  *
@@ -121,8 +106,13 @@ internal fun SessionMenu(
     }
 }
 
-/** 竖屏：底部抽屉（与项目其它抽屉同为 ModalBottomSheet）。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 竖屏：底部抽屉（[InWindowBottomSheet]，窗口内自绘）。
+ *
+ * 不用 Material3 的 ModalBottomSheet：它底层是独立 Dialog 窗口，freeform 小窗下会按屏幕
+ * 而不是按 App 窗口布局，弹层就"飘到桌面中间"了。现在抽屉与宿主同一个窗口，
+ * 沉浸状态也天然继承会话页（不再需要给抽屉窗口单独隐藏系统栏）。
+ */
 @Composable
 private fun PortraitSessionSheet(
     display: SessionDisplay?,
@@ -132,59 +122,22 @@ private fun PortraitSessionSheet(
     onShowKeyboardButtonChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val windowInsets = rememberSystemBarInsets()
-    // 内容不高（两个分组），直接全展开，不要停在半屏。
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    InWindowBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
         // 配色必须和设置页**完全**一致：设置页 Scaffold 的容器色就是 background，
-        // 抽屉默认的 surfaceContainerLow 比它深/浅一档，放在一起会显得"不是一个应用"。
+        // M3 抽屉默认的 surfaceContainerLow 比它深/浅一档，放在一起会显得"不是一个应用"。
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
-        // 与 SingleChoiceSheet 一致：小窗里系统导航栏上报不可用，统一按 SystemBars 的 max 口径取底部安全区。
-        contentWindowInsets = { windowInsets.only(WindowInsetsSides.Bottom) },
     ) {
-        SheetImmersiveEffect()
         SessionMenuContent(
             display = display,
             showMouseButton = showMouseButton,
             showKeyboardButton = showKeyboardButton,
             onShowMouseButtonChange = onShowMouseButtonChange,
             onShowKeyboardButtonChange = onShowKeyboardButtonChange,
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 24.dp),
         )
     }
-}
-
-/**
- * 让底部抽屉自己那个对话框窗口也保持沉浸。
- *
- * 会话页在 Activity 窗口上是全屏沉浸的，但 [ModalBottomSheet] 会新建一个 Dialog 窗口，
- * 系统栏可见性是**按窗口**记录的：不处理的话打开抽屉时状态栏会重新冒出来压住远端画面。
- * ModalBottomSheet 的根布局（DialogLayout）实现了 [DialogWindowProvider]，
- * 从 [LocalView] 顺着 parent 找到它就能拿到这个对话框自己的 Window。
- */
-@Composable
-private fun SheetImmersiveEffect() {
-    val view = LocalView.current
-    LaunchedEffect(view) {
-        val dialogWindow = view.dialogWindow() ?: return@LaunchedEffect
-        val controller = WindowCompat.getInsetsController(dialogWindow, view)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.hide(WindowInsetsCompat.Type.systemBars())
-    }
-}
-
-/** 顺着 View 树往上找实现了 [DialogWindowProvider] 的根布局（对话框/抽屉自己的 Window）。 */
-private fun View.dialogWindow(): Window? {
-    var current: View? = this
-    while (current != null) {
-        if (current is DialogWindowProvider) return current.window
-        current = current.parent as? View
-    }
-    return null
 }
 
 /**
@@ -201,6 +154,10 @@ private fun LandscapeSessionMenu(
 ) {
     // 菜单打开时返回键先关菜单，而不是走「再按一次退出会话」。
     BackHandler(enabled = visible, onBack = onDismiss)
+
+    // 与竖屏抽屉同一个底部/侧边安全区口径：沉浸时是 0，三键导航/小窗/横屏侧边栏时
+    // 把面板内容让到系统栏之内，避免抽屉最后一行压在三颗按键上。
+    val windowInsets = rememberSystemBarInsets()
 
     val scrimInteraction = remember { MutableInteractionSource() }
     AnimatedVisibility(
@@ -245,8 +202,7 @@ private fun LandscapeSessionMenu(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(panelWidth)
-                    .windowInsetsPadding(WindowInsets.displayCutout)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)),
+                    .windowInsetsPadding(windowInsets),
                 // 和设置页 Scaffold 同色（background），不要再叠 tonalElevation ——
                 // 那会把这层面板染成介于二者之间的颜色，卡片就"看不出底"了。
                 color = MaterialTheme.colorScheme.background,

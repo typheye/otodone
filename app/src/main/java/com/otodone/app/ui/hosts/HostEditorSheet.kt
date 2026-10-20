@@ -5,14 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,15 +25,20 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.otodone.app.R
 import com.otodone.app.data.RdpHost
+import com.otodone.app.ui.components.InWindowBottomSheet
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 添加/编辑电脑的表单抽屉。
+ *
+ * 承载方式见 [InWindowBottomSheet]：窗口内自绘，小窗（freeform）下不会飘到桌面上；
+ * 底部安全区与键盘由承载层统一处理（表单本身只负责滚动，避免嵌套滚动）。
+ */
 @Composable
 fun HostEditorSheet(
     initial: RdpHost?,
     onDismiss: () -> Unit,
     onSave: (RdpHost) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var address by remember { mutableStateOf(initial?.address.orEmpty()) }
     var port by remember { mutableStateOf((initial?.port ?: RdpHost.DEFAULT_PORT).toString()) }
@@ -43,12 +47,14 @@ fun HostEditorSheet(
     var password by remember { mutableStateOf(initial?.password.orEmpty()) }
     var addressError by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    InWindowBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // 键盘弹出 / 小窗很矮时表单可滚动；外层承载层已把面板抬到 IME 之上。
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
+                .padding(top = 24.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(

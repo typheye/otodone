@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.lazy.LazyColumn
-import com.otodone.app.ui.components.ConfirmSheet
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,7 +31,6 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -65,7 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.pm.PackageInfoCompat
 import com.otodone.app.R
 import com.otodone.app.ui.insets.rememberSystemBarInsets
+import com.otodone.app.ui.insets.rememberThreeButtonNav
 import com.otodone.app.ui.components.ActionPreferenceRow
+import com.otodone.app.ui.components.ConfirmSheet
 import com.otodone.app.ui.components.PreferenceCard
 import com.otodone.app.ui.components.PreferenceDivider
 import com.otodone.app.ui.components.PreferenceRow
@@ -84,6 +84,7 @@ fun AboutScreen(onBack: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showContactDialog by remember { mutableStateOf(false) }
     val windowInsets = rememberSystemBarInsets()
+    val threeButtonNav = rememberThreeButtonNav()
 
     val packageInfo = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
@@ -95,127 +96,135 @@ fun AboutScreen(onBack: () -> Unit) {
     val email = stringResource(R.string.about_contact_email)
     val copiedMessage = stringResource(R.string.about_contact_copied)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                windowInsets = windowInsets.only(
-                    WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+    // 弹层必须和页面在同一个 Box 里、排在 Scaffold 之后，才会盖在页面顶层（同一窗口）。
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    windowInsets = windowInsets.only(
+                        WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+                    ),
+                    title = { Text(stringResource(R.string.about_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.action_back),
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { shareApp(context) }) {
+                            Icon(
+                                imageVector = Icons.Filled.Share,
+                                contentDescription = stringResource(R.string.action_share),
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            contentWindowInsets = windowInsets,
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 三键导航：视口裁到导航栏之上；手势导航保持 edge-to-edge。
+                    .padding(
+                        bottom = if (threeButtonNav) padding.calculateBottomPadding() else 0.dp,
+                    ),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    top = padding.calculateTopPadding() + 24.dp,
+                    end = 16.dp,
+                    bottom = if (threeButtonNav) 32.dp else padding.calculateBottomPadding() + 32.dp,
                 ),
-                title = { Text(stringResource(R.string.about_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back),
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { shareApp(context) }) {
-                        Icon(
-                            imageVector = Icons.Filled.Share,
-                            contentDescription = stringResource(R.string.action_share),
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        contentWindowInsets = windowInsets,
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                top = padding.calculateTopPadding() + 24.dp,
-                end = 16.dp,
-                bottom = padding.calculateBottomPadding() + 32.dp,
-            ),
-        ) {
-            item { AboutHeader(versionName = versionName) }
-            item {
-                Spacer(Modifier.height(24.dp))
-                VersionInfoCard(versionCode = versionCode, targetSdk = targetSdk, channel = channel)
-            }
-
-            item { SectionLabel(stringResource(R.string.about_section_developer), topSpace = true) }
-            item {
-                PreferenceCard {
-                    PreferenceRow(
-                        icon = Icons.Filled.Person,
-                        title = stringResource(R.string.about_developer),
-                        subtitle = stringResource(R.string.about_developer_name),
-                        iconTint = MaterialTheme.colorScheme.primary,
-                    )
-                    PreferenceDivider()
-                    ActionPreferenceRow(
-                        icon = Icons.Filled.Email,
-                        title = stringResource(R.string.about_feedback),
-                        subtitle = stringResource(R.string.about_feedback_desc),
-                        onClick = { showContactDialog = true },
-                    )
-                    PreferenceDivider()
-                    ActionPreferenceRow(
-                        icon = ImageVector.vectorResource(R.drawable.ic_github),
-                        title = stringResource(R.string.about_homepage),
-                        subtitle = stringResource(R.string.about_homepage_desc),
-                        onClick = { openUrl(context, HOMEPAGE_URL) },
-                    )
+            ) {
+                item { AboutHeader(versionName = versionName) }
+                item {
+                    Spacer(Modifier.height(24.dp))
+                    VersionInfoCard(versionCode = versionCode, targetSdk = targetSdk, channel = channel)
                 }
-            }
 
-            item { SectionLabel(stringResource(R.string.about_section_legal), topSpace = true) }
-            item {
-                PreferenceCard {
-                    ActionPreferenceRow(
-                        icon = Icons.Filled.Policy,
-                        title = stringResource(R.string.about_privacy),
-                        subtitle = stringResource(R.string.about_privacy_desc),
-                        onClick = { openUrl(context, POLICY_URL) },
-                    )
-                    PreferenceDivider()
-                    ActionPreferenceRow(
-                        icon = Icons.Filled.Description,
-                        title = stringResource(R.string.about_license),
-                        subtitle = stringResource(R.string.about_license_desc),
-                        onClick = { openUrl(context, LICENSE_URL) },
-                    )
-                }
-            }
-
-            item { SectionLabel(stringResource(R.string.about_section_opensource), topSpace = true) }
-            item {
-                PreferenceCard {
-                    OPEN_SOURCE.forEachIndexed { index, item ->
+                item { SectionLabel(stringResource(R.string.about_section_developer), topSpace = true) }
+                item {
+                    PreferenceCard {
+                        PreferenceRow(
+                            icon = Icons.Filled.Person,
+                            title = stringResource(R.string.about_developer),
+                            subtitle = stringResource(R.string.about_developer_name),
+                            iconTint = MaterialTheme.colorScheme.primary,
+                        )
+                        PreferenceDivider()
                         ActionPreferenceRow(
-                            icon = Icons.Filled.Link,
-                            title = item.name,
-                            subtitle = stringResource(R.string.about_by, item.author),
-                            onClick = { openUrl(context, item.url) },
+                            icon = Icons.Filled.Email,
+                            title = stringResource(R.string.about_feedback),
+                            subtitle = stringResource(R.string.about_feedback_desc),
+                            onClick = { showContactDialog = true },
                         )
-                        if (index < OPEN_SOURCE.lastIndex) PreferenceDivider()
+                        PreferenceDivider()
+                        ActionPreferenceRow(
+                            icon = ImageVector.vectorResource(R.drawable.ic_github),
+                            title = stringResource(R.string.about_homepage),
+                            subtitle = stringResource(R.string.about_homepage_desc),
+                            onClick = { openUrl(context, HOMEPAGE_URL) },
+                        )
+                    }
+                }
+
+                item { SectionLabel(stringResource(R.string.about_section_legal), topSpace = true) }
+                item {
+                    PreferenceCard {
+                        ActionPreferenceRow(
+                            icon = Icons.Filled.Policy,
+                            title = stringResource(R.string.about_privacy),
+                            subtitle = stringResource(R.string.about_privacy_desc),
+                            onClick = { openUrl(context, POLICY_URL) },
+                        )
+                        PreferenceDivider()
+                        ActionPreferenceRow(
+                            icon = Icons.Filled.Description,
+                            title = stringResource(R.string.about_license),
+                            subtitle = stringResource(R.string.about_license_desc),
+                            onClick = { openUrl(context, LICENSE_URL) },
+                        )
+                    }
+                }
+
+                item { SectionLabel(stringResource(R.string.about_section_opensource), topSpace = true) }
+                item {
+                    PreferenceCard {
+                        OPEN_SOURCE.forEachIndexed { index, item ->
+                            ActionPreferenceRow(
+                                icon = Icons.Filled.Link,
+                                title = item.name,
+                                subtitle = stringResource(R.string.about_by, item.author),
+                                onClick = { openUrl(context, item.url) },
+                            )
+                            if (index < OPEN_SOURCE.lastIndex) PreferenceDivider()
+                        }
                     }
                 }
             }
         }
-    }
 
-    if (showContactDialog) {
-        ConfirmSheet(
-            title = stringResource(R.string.about_feedback),
-            message = stringResource(R.string.about_feedback_contact),
-            confirmLabel = stringResource(R.string.action_copy),
-            dismissLabel = stringResource(R.string.action_close),
-            onConfirm = {
-                copyToClipboard(context, email)
-                showContactDialog = false
-                scope.launch { snackbarHostState.showSnackbar(copiedMessage) }
-            },
-            onDismiss = { showContactDialog = false },
-        )
+        if (showContactDialog) {
+            ConfirmSheet(
+                title = stringResource(R.string.about_feedback),
+                message = stringResource(R.string.about_feedback_contact),
+                confirmLabel = stringResource(R.string.action_copy),
+                dismissLabel = stringResource(R.string.action_close),
+                onConfirm = {
+                    copyToClipboard(context, email)
+                    showContactDialog = false
+                    scope.launch { snackbarHostState.showSnackbar(copiedMessage) }
+                },
+                onDismiss = { showContactDialog = false },
+            )
+        }
     }
 }
 

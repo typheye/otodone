@@ -16,6 +16,10 @@
     <string name="action_save">保存</string>
     <string name="action_cancel">取消</string>
     <string name="action_delete">删除</string>
+    <!-- 删除电脑的底部二次确认 -->
+    <string name="host_delete_title">删除电脑？</string>
+    <string name="host_delete_message">将从本机移除「%1$s」，保存的密码也会一并删除，此操作不可恢复。</string>
+    <string name="host_deleted">已删除「%1$s」</string>
     <string name="action_connect">连接</string>
     <string name="action_edit">编辑</string>
     <string name="session_connecting">正在连接 %1$s…</string>

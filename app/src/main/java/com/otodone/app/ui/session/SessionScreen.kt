@@ -31,12 +31,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -107,6 +108,7 @@ import com.otodone.app.data.SessionOrientation
 import com.otodone.app.rdp.RdpState
 import com.otodone.app.rdp.RdpSurfaceView
 import com.otodone.app.ui.hosts.HostListViewModel
+import com.otodone.app.ui.insets.rememberSystemBarInsets
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -179,6 +181,13 @@ fun SessionScreen(
     val frameTick by viewModel.frameTick.collectAsState()
     val context = LocalContext.current
     val density = LocalDensity.current
+    // 全窗口统一的系统栏安全区（含三键导航的 tappableElement 兜底、小窗配额 max）。
+    // 会话页是沉浸的：系统栏隐藏时这里的 bottom 自然为 0，浮标仍贴底；
+    // 三键导航露出来 / 小窗 / 横屏侧边导航时才会把浮标抬到导航栏之上。
+    val safeInsets = rememberSystemBarInsets()
+    val floatInsets = safeInsets.only(
+        WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal,
+    )
     val inputMethodManager = remember {
         context.getSystemService(InputMethodManager::class.java)
     }
@@ -346,7 +355,7 @@ fun SessionScreen(
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .windowInsetsPadding(floatInsets)
                     .padding(end = 14.dp, bottom = 14.dp),
             )
         }
@@ -368,7 +377,7 @@ fun SessionScreen(
                 },
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .windowInsetsPadding(floatInsets)
                     // 必须和键盘浮标一致：padding 写在 size 之前，两圆圈的上下间距才一致。
                     .padding(start = 14.dp, bottom = 14.dp),
             )
@@ -381,7 +390,7 @@ fun SessionScreen(
                 onClick = { menuOpen = true },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.displayCutout)
+                    .windowInsetsPadding(floatInsets)
                     .padding(end = 14.dp, top = 14.dp),
             )
         }

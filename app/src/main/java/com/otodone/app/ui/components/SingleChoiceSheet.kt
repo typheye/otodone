@@ -3,20 +3,17 @@ package com.otodone.app.ui.components
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.otodone.app.ui.insets.rememberSystemBarInsets
 
 /** 单选抽屉的一个选项。 */
 data class SingleChoiceItem<T>(
@@ -26,10 +23,12 @@ data class SingleChoiceItem<T>(
 )
 
 /**
- * 单选用的底部抽屉（与 [ConfirmSheet] 同一个 ModalBottomSheet 观感）。
+ * 单选用的底部抽屉（与 [ConfirmSheet] 同一个 [InWindowBottomSheet] 承载）。
  * 点击整行或右侧单选圆点都会选中，并立即回调 [onSelect]。
+ *
+ * 承载方式见 [InWindowBottomSheet]：窗口内自绘，不再用 Dialog 窗口的 ModalBottomSheet，
+ * 因此小窗（freeform）下会完整落在 App 窗口里。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun <T> SingleChoiceSheet(
     title: String,
@@ -39,22 +38,21 @@ fun <T> SingleChoiceSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val windowInsets = rememberSystemBarInsets()
-    ModalBottomSheet(
+    InWindowBottomSheet(
         onDismissRequest = onDismiss,
         modifier = modifier,
-        // 小窗里系统导航栏上报不可用，统一按 SystemBars 的 max 口径取底部安全区
-        contentWindowInsets = { windowInsets.only(WindowInsetsSides.Bottom) },
     ) {
+        // 选项多/窗口很矮时也能滚到最后一项；这里是外层唯一一层滚动，不会嵌套。
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(bottom = 16.dp),
         ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp),
             )
             items.forEach { item ->
                 val isSelected = item.value == selected
